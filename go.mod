@@ -1,6 +1,6 @@
 module github.com/mizuchilabs/tetherd
 
-go 1.26.2
+go 1.26.1
 
 require (
 	github.com/moby/moby/api v1.54.2
