@@ -71,9 +71,6 @@ func (c *Client) Update(ctx context.Context, config []byte) {
 	if c.cfg.Version != "" {
 		req.Header.Set("Agent-Version", c.cfg.Version)
 	}
-	if c.cfg.Hostname != "" {
-		req.Header.Set("Agent-Name", c.cfg.Hostname)
-	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

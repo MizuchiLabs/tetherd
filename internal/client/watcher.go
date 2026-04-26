@@ -30,8 +30,6 @@ func NewWatcher(agentCLI *Client, hostIP string) (*Watcher, error) {
 }
 
 func (w *Watcher) Start(ctx context.Context) {
-	slog.Info("Starting Docker watcher...")
-
 	// Initial sync
 	w.syncContainers(ctx)
 
@@ -49,7 +47,6 @@ func (w *Watcher) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("Docker watcher stopping")
 			return
 		case err := <-stream.Err:
 			if err != nil {

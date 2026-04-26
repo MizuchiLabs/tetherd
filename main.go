@@ -58,8 +58,11 @@ func main() {
 				return fmt.Errorf("failed to initialize docker watcher: %w", err)
 			}
 
+			slog.Info("Starting tetherd", "version", Version)
 			go watcher.Start(ctx)
 			<-ctx.Done()
+
+			slog.Info("Shutting down...")
 			return nil
 		},
 		Flags: []cli.Flag{
