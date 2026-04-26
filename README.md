@@ -1,3 +1,11 @@
+<p align="center">
+<img src="./.github/logo.svg" width="80">
+<br><br>
+<img alt="GitHub Tag" src="https://img.shields.io/github/v/tag/MizuchiLabs/tetherd?label=Version">
+<img alt="GitHub License" src="https://img.shields.io/github/license/MizuchiLabs/tetherd">
+<img alt="GitHub Issues or Pull Requests" src="https://img.shields.io/github/issues/MizuchiLabs/tetherd">
+</p>
+
 # Tetherd
 
 Tetherd is a lightweight, efficient Go agent designed to run alongside your Docker containers on distributed nodes.
