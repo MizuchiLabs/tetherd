@@ -19,6 +19,8 @@ services:
       - TETHERD_TOKEN=your-secret-token
       # - TETHERD_ENVIRONMENT=production # Optional: default is "default"
       # - TETHERD_HOST_IP=1.2.3.4 # Optional: Auto-detected if not set
+      # - TETHERD_INSECURE=true # Optional: default is false
+      # - TETHERD_INTERVAL=300s # Optional: default is 30s
     restart: unless-stopped
 ```
 
