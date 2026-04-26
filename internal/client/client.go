@@ -2,26 +2,33 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
-	"os"
+	"strings"
 	"time"
 
-	tetherv1 "github.com/mizuchilabs/tetherd/internal/gen/tether/v1"
-	"github.com/mizuchilabs/tetherd/internal/gen/tether/v1/tetherv1connect"
+	"github.com/mizuchilabs/tetherd/internal/config"
 )
 
-type Client struct {
-	name string
-	env  string
-	cli  tetherv1connect.AgentServiceClient
+type HeartbeatRequest struct {
+	Env    string          `json:"env"`
+	Name   string          `json:"name"`
+	Config json.RawMessage `json:"config"`
 }
 
-func NewClient(env, endpoint string, insecure bool) (*Client, error) {
+type Client struct {
+	cfg        *config.Config
+	httpClient *http.Client
+}
+
+func NewClient(cfg *config.Config) (*Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if insecure {
+	if cfg.Insecure {
 		// #nosec - G402
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
@@ -30,27 +37,53 @@ func NewClient(env, endpoint string, insecure bool) (*Client, error) {
 		Timeout:   30 * time.Second,
 		Transport: transport,
 	}
-	// interceptors := connect.WithInterceptors(
-	// 	withAuth(),
-	// )
 
-	hostname, _ := os.Hostname()
-	client := &Client{name: hostname, env: env}
-	client.cli = tetherv1connect.NewAgentServiceClient(
-		httpClient,
-		endpoint,
-		// interceptors,
-	)
-
-	return client, nil
+	return &Client{
+		cfg:        cfg,
+		httpClient: httpClient,
+	}, nil
 }
 
 func (c *Client) Update(ctx context.Context, config []byte) {
-	if _, err := c.cli.AgentHeartbeat(ctx, &tetherv1.AgentHeartbeatRequest{
-		Name:   new(c.name),
-		Env:    new(c.env),
-		Config: config,
-	}); err != nil {
+	reqBody := HeartbeatRequest{
+		Name:   c.cfg.Hostname,
+		Env:    c.cfg.Environment,
+		Config: json.RawMessage(config),
+	}
+
+	b, err := json.Marshal(reqBody)
+	if err != nil {
+		slog.Error("Failed to marshal heartbeat request", "error", err)
+		return
+	}
+
+	url := strings.TrimRight(c.cfg.Server, "/") + "/agent/heartbeat"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	if err != nil {
+		slog.Error("Failed to create heartbeat request", "error", err)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.cfg.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	}
+	if c.cfg.Version != "" {
+		req.Header.Set("Agent-Version", c.cfg.Version)
+	}
+	if c.cfg.Hostname != "" {
+		req.Header.Set("Agent-Name", c.cfg.Hostname)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
 		slog.Error("Failed to send heartbeat", "error", err)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		slog.Error("Heartbeat request failed", "status", resp.Status, "body", string(body))
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/mizuchilabs/tetherd/internal/client"
+	"github.com/mizuchilabs/tetherd/internal/config"
 	"github.com/urfave/cli/v3"
 )
 
@@ -28,8 +29,6 @@ func main() {
 		Usage:                 "traefik agent for distributed nodes",
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			hostIP := cmd.String("host-ip")
-			endpoint := cmd.String("endpoint")
-			env := cmd.String("env")
 
 			level := slog.LevelInfo
 			if cmd.Bool("debug") {
@@ -43,7 +42,12 @@ func main() {
 				slog.Warn("Docker socket not found", "path", "/var/run/docker.sock")
 			}
 
-			cli, err := client.NewClient(env, endpoint, false)
+			cfg, err := config.New(ctx, cmd)
+			if err != nil {
+				return fmt.Errorf("failed to initialize config: %w", err)
+			}
+
+			cli, err := client.NewClient(cfg)
 			if err != nil {
 				return fmt.Errorf("failed to initialize docker client: %w", err)
 			}
@@ -72,16 +76,22 @@ func main() {
 				Sources: cli.EnvVars("TETHERD_HOST_IP"),
 			},
 			&cli.StringFlag{
-				Name:    "endpoint",
-				Aliases: []string{"e"},
-				Usage:   "The endpoint to send updates to. Default: http://127.0.0.1:3000",
+				Name:    "server",
+				Aliases: []string{"s"},
+				Usage:   "The URL of the central Tether server",
 				Value:   "http://127.0.0.1:3000",
-				Sources: cli.EnvVars("TETHERD_ENDPOINT"),
+				Sources: cli.EnvVars("TETHERD_SERVER"),
+			},
+			&cli.StringFlag{
+				Name:    "token",
+				Aliases: []string{"t"},
+				Usage:   "The central Tether server authentication token",
+				Sources: cli.EnvVars("TETHERD_TOKEN"),
 			},
 			&cli.StringFlag{
 				Name:    "environment",
 				Aliases: []string{"env"},
-				Usage:   "The environment to send updates to. Default: default",
+				Usage:   "The isolated environment group to send updates to",
 				Value:   "default",
 				Sources: cli.EnvVars("TETHERD_ENVIRONMENT"),
 			},
