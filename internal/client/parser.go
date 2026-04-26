@@ -40,8 +40,7 @@ func BuildTraefikConfig(containers []container.Summary, hostIP string) ([]byte, 
 		// Extract port mappings from Docker container
 		defaultPort, portMap := extractContainerPorts(c)
 		if defaultPort == "" {
-			slog.Warn("Container enabled but has no public ports", "container", containerName)
-			continue
+			slog.Debug("Container has no public ports, relying on explicit label ports", "container", containerName)
 		}
 
 		// Process HTTP
@@ -234,15 +233,23 @@ func processUDPServers(
 	portMap map[string]string,
 ) {
 	if len(lb.Servers) == 0 {
-		lb.Servers = []dynamic.UDPServer{{Address: fmt.Sprintf("%s:%s", hostIP, defaultPort)}}
+		if defaultPort != "" {
+			lb.Servers = []dynamic.UDPServer{{Address: fmt.Sprintf("%s:%s", hostIP, defaultPort)}}
+		}
 		return
 	}
 	for i, srv := range lb.Servers {
 		mapped := portMap[srv.Port]
 		if mapped == "" {
-			mapped = defaultPort
+			if srv.Port != "" {
+				mapped = srv.Port
+			} else {
+				mapped = defaultPort
+			}
 		}
-		lb.Servers[i].Address = fmt.Sprintf("%s:%s", hostIP, mapped)
+		if mapped != "" {
+			lb.Servers[i].Address = fmt.Sprintf("%s:%s", hostIP, mapped)
+		}
 		lb.Servers[i].Port = ""
 	}
 }

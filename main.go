@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/mizuchilabs/tetherd/internal/client"
 	"github.com/mizuchilabs/tetherd/internal/config"
@@ -28,8 +29,6 @@ func main() {
 		Version:               fmt.Sprintf("%s (commit: %s, built: %s)", Version, Commit, Date),
 		Usage:                 "traefik agent for distributed nodes",
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			hostIP := cmd.String("host-ip")
-
 			level := slog.LevelInfo
 			if cmd.Bool("debug") {
 				level = slog.LevelDebug
@@ -53,7 +52,7 @@ func main() {
 			}
 
 			// Start Docker watcher
-			watcher, err := client.NewWatcher(cli, hostIP)
+			watcher, err := client.NewWatcher(cli, cfg)
 			if err != nil {
 				return fmt.Errorf("failed to initialize docker watcher: %w", err)
 			}
@@ -97,6 +96,13 @@ func main() {
 				Usage:   "The isolated environment group to send updates to",
 				Value:   "default",
 				Sources: cli.EnvVars("TETHERD_ENVIRONMENT"),
+			},
+			&cli.DurationFlag{
+				Name:    "interval",
+				Aliases: []string{"i"},
+				Usage:   "The interval at which to send updates to the central Tether server",
+				Value:   30 * time.Second,
+				Sources: cli.EnvVars("TETHERD_INTERVAL"),
 			},
 		},
 	}
