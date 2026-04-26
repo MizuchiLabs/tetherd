@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -10,9 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/mizuchilabs/tetherd/internal/agent"
-	"github.com/mizuchilabs/tetherd/internal/api"
-	"github.com/mizuchilabs/tetherd/internal/util"
+	"github.com/mizuchilabs/tetherd/internal/client"
 	"github.com/urfave/cli/v3"
 )
 
@@ -31,8 +28,8 @@ func main() {
 		Usage:                 "traefik agent for distributed nodes",
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			hostIP := cmd.String("host-ip")
-			port := cmd.String("port")
-			auth := cmd.String("auth")
+			endpoint := cmd.String("endpoint")
+			env := cmd.String("env")
 
 			level := slog.LevelInfo
 			if cmd.Bool("debug") {
@@ -46,31 +43,19 @@ func main() {
 				slog.Warn("Docker socket not found", "path", "/var/run/docker.sock")
 			}
 
-			if hostIP == "" {
-				hostIP = util.GetOutboundIP()
-				if hostIP == "" {
-					return errors.New(
-						"could not detect outbound IP automatically, please set --host-ip manually",
-					)
-				}
-				slog.Info("Host IP auto-detected", "ip", hostIP)
+			cli, err := client.NewClient(env, endpoint, false)
+			if err != nil {
+				return fmt.Errorf("failed to initialize docker client: %w", err)
 			}
 
-			slog.Info("Starting tetherd agent", "version", Version, "host-ip", hostIP)
-
-			// Initialize state manager
-			state := agent.NewStateManager(hostIP)
-
 			// Start Docker watcher
-			watcher, err := agent.NewWatcher(state)
+			watcher, err := client.NewWatcher(cli, hostIP)
 			if err != nil {
 				return fmt.Errorf("failed to initialize docker watcher: %w", err)
 			}
 
 			go watcher.Start(ctx)
-
-			// Start HTTP Server
-			api.NewServer(port, auth, state).Start(ctx)
+			<-ctx.Done()
 			return nil
 		},
 		Flags: []cli.Flag{
@@ -87,17 +72,18 @@ func main() {
 				Sources: cli.EnvVars("TETHERD_HOST_IP"),
 			},
 			&cli.StringFlag{
-				Name:    "port",
-				Aliases: []string{"p"},
-				Usage:   "Port for the traefik HTTP provider to listen on",
-				Value:   "3000",
-				Sources: cli.EnvVars("TETHERD_PORT"),
+				Name:    "endpoint",
+				Aliases: []string{"e"},
+				Usage:   "The endpoint to send updates to. Default: http://127.0.0.1:3000",
+				Value:   "http://127.0.0.1:3000",
+				Sources: cli.EnvVars("TETHERD_ENDPOINT"),
 			},
 			&cli.StringFlag{
-				Name:    "auth",
-				Aliases: []string{"a"},
-				Usage:   "Basic auth credentials (e.g. 'user:password')",
-				Sources: cli.EnvVars("TETHERD_AUTH"),
+				Name:    "environment",
+				Aliases: []string{"env"},
+				Usage:   "The environment to send updates to. Default: default",
+				Value:   "default",
+				Sources: cli.EnvVars("TETHERD_ENVIRONMENT"),
 			},
 		},
 	}

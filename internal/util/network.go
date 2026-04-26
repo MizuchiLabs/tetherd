@@ -15,7 +15,7 @@ func GetOutboundIP() string {
 			"error",
 			err,
 		)
-		return ""
+		return "127.0.0.1"
 	}
 	defer func() { _ = conn.Close() }()
 

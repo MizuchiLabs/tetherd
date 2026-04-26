@@ -1,32 +1,38 @@
-package agent
+package client
 
 import (
 	"context"
 	"log/slog"
 
+	"github.com/mizuchilabs/tetherd/internal/util"
 	"github.com/moby/moby/client"
 )
 
 type Watcher struct {
-	cli   *client.Client
-	state *StateManager
+	dockerCLI *client.Client
+	agentCLI  *Client
+	hostIP    string
 }
 
-func NewWatcher(state *StateManager) (*Watcher, error) {
-	cli, err := client.New(client.FromEnv)
+func NewWatcher(agentCLI *Client, hostIP string) (*Watcher, error) {
+	dockerCLI, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, err
 	}
+	if hostIP == "" {
+		hostIP = util.GetOutboundIP()
+	}
 	return &Watcher{
-		cli:   cli,
-		state: state,
+		dockerCLI: dockerCLI,
+		agentCLI:  agentCLI,
+		hostIP:    hostIP,
 	}, nil
 }
 
 func (w *Watcher) Start(ctx context.Context) {
 	slog.Info("Starting Docker watcher...")
 
-	// Do initial sync
+	// Initial sync
 	w.syncContainers(ctx)
 
 	// Listen for events
@@ -38,7 +44,7 @@ func (w *Watcher) Start(ctx context.Context) {
 	filters.Add("event", "remove")
 	filters.Add("event", "destroy")
 
-	stream := w.cli.Events(ctx, client.EventsListOptions{Filters: filters})
+	stream := w.dockerCLI.Events(ctx, client.EventsListOptions{Filters: filters})
 
 	for {
 		select {
@@ -59,7 +65,7 @@ func (w *Watcher) Start(ctx context.Context) {
 func (w *Watcher) syncContainers(ctx context.Context) {
 	filters := client.Filters{}
 	filters.Add("label", "traefik.enable=true")
-	containers, err := w.cli.ContainerList(
+	containers, err := w.dockerCLI.ContainerList(
 		ctx,
 		client.ContainerListOptions{All: false, Filters: filters},
 	)
@@ -68,10 +74,11 @@ func (w *Watcher) syncContainers(ctx context.Context) {
 		return
 	}
 
-	config, err := BuildTraefikConfig(containers.Items, w.state.GetHostIP())
+	config, err := BuildTraefikConfig(containers.Items, w.hostIP)
 	if err != nil {
 		slog.Error("Failed to build Traefik config", "error", err)
 		return
 	}
-	w.state.UpdateConfig(config)
+
+	w.agentCLI.Update(ctx, config)
 }

@@ -1,0 +1,10 @@
+services:
+  whoami:
+    image: traefik/whoami
+    ports:
+      - 80:80
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whoami.rule=Host(`whoami.localhost`)"
+      - "traefik.http.services.whoami.loadbalancer.server.port=80"
+    restart: unless-stopped

@@ -1,0 +1,25 @@
+version: v2
+clean: true
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/mizuchilabs/tetherd/internal/gen
+  disable:
+    - file_option: go_package
+      module: buf.build/bufbuild/protovalidate
+    - file_option: go_package
+      module: buf.build/googleapis/googleapis
+plugins:
+  - protoc_builtin: go
+    out: internal/gen
+    opt: paths=source_relative
+  - local: protoc-gen-connect-go
+    out: internal/gen
+    opt:
+      - paths=source_relative
+      - simple
+inputs:
+  - git_repo: https://github.com/mizuchilabs/protos.git
+    branch: main
+    subdir: tether

@@ -1,5 +1,4 @@
-// Package agent contains the traefik agent lpackage agent
-package agent
+package client
 
 import (
 	"encoding/json"
