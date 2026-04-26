@@ -12,6 +12,7 @@ Deploy the `tetherd` agent on each worker node where you run your Docker contain
 services:
   tetherd:
     image: ghcr.io/mizuchilabs/tetherd:latest
+    network_mode: host # To reliably detect correct local ip
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
