@@ -57,7 +57,7 @@ func (c *Client) Update(ctx context.Context, config []byte) {
 		return
 	}
 
-	url := strings.TrimRight(c.cfg.Server, "/") + "/agent/heartbeat"
+	url := strings.TrimRight(c.cfg.Server, "/") + "/api/heartbeat"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
 	if err != nil {
 		slog.Error("Failed to create heartbeat request", "error", err)
