@@ -3,57 +3,71 @@
 <br><br>
 <img alt="GitHub Tag" src="https://img.shields.io/github/v/tag/MizuchiLabs/tetherd?label=Version">
 <img alt="GitHub License" src="https://img.shields.io/github/license/MizuchiLabs/tetherd">
-<img alt="GitHub Issues or Pull Requests" src="https://img.shields.io/github/issues/MizuchiLabs/tetherd">
 </p>
+<img alt="GitHub Issues or Pull Requests" src="https://img.shields.io/github/issues/MizuchiLabs/tetherd">
 
 # Tetherd
 
-Tetherd is a lightweight, efficient Go agent designed to run alongside your Docker containers on distributed nodes.
+**Tetherd** is the lightweight agent that runs on your worker servers. It watches your Docker containers and tells the central [Tether](https://github.com/MizuchiLabs/tether) server where they are so Traefik can find them.
 
-## Setup
+## How it Works
 
-### Docker
+1. You run Tetherd on every server where you have Docker containers.
+2. Tetherd looks at your containers' labels (like `traefik.http.routers.myapp.rule`).
+3. It automatically detects the server's IP address.
+4. It sends this information to your central **Tether** server.
 
-Deploy the `tetherd` agent on each worker node where you run your Docker containers. It needs access to the Docker socket to listen for events.
+This allows a single Traefik instance on a different machine to route traffic to these containers seamlessly.
+
+## Quick Start
+
+Run Tetherd on your worker server:
 
 ```yaml
 services:
   tetherd:
     image: ghcr.io/mizuchilabs/tetherd:latest
-    network_mode: host # To reliably detect correct local ip
+    network_mode: host # Highly recommended for IP detection
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       - TETHERD_SERVER=http://<TETHER_SERVER_IP>:3000
-      - TETHERD_TOKEN=your-secret-token
-      # - TETHERD_ENVIRONMENT=production # Optional: default is "default"
-      # - TETHERD_HOST_IP=1.2.3.4 # Optional: Auto-detected if not set
-      # - TETHERD_INSECURE=true # Optional: default is false
-      # - TETHERD_INTERVAL=300s # Optional: default is 30s
+      - TETHERD_TOKEN=your-secret-password
     restart: unless-stopped
 ```
 
-### Binary
+## Deploying an App
 
-Download the binary from [releases](https://github.com/mizuchilabs/tetherd/releases) and run it on your worker node.
-
-## Example Application Container
-
-Deploy a container on your worker node as usual. The `tetherd` agent will pick up the labels, inject the correct host IP, and push the config to the central server:
+When you deploy an app on this worker server, just add standard Traefik labels. Tetherd handles the rest:
 
 ```yaml
 services:
-  whoami:
-    image: traefik/whoami
+  my-app:
+    image: nginx
     ports:
-      - "9000:80" # Exposed to host, tetherd will auto-inject http://<HOST_IP>:9000
+      - "8080:80"
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.whoami.rule=Host(`whoami.yourdomain.com`)"
+      - "traefik.http.routers.my-app.rule=Host(`my-app.com`)"
 ```
 
-Central Traefik will automatically route `whoami.yourdomain.com` to `http://<WORKER_NODE_IP>:9000`.
+Tetherd will tell the central server: _"Send traffic for `my-app.com` to `http://<THIS_SERVER_IP>:8080`"_.
+
+## Configuration
+
+| Env Var               | Flag         | Default                 | Description                                     |
+| --------------------- | ------------ | ----------------------- | ----------------------------------------------- |
+| `TETHERD_SERVER`      | `--server`   | `http://127.0.0.1:3000` | URL of the central Tether server.               |
+| `TETHERD_TOKEN`       | `--token`    |                         | **Required**: Token matching the Tether server. |
+| `TETHERD_HOST_IP`     | `--host-ip`  | _(auto)_                | Manual override for this server's IP.           |
+| `TETHERD_INTERVAL`    | `--interval` | `30s`                   | How often to sync with the central server.      |
+| `TETHERD_ENVIRONMENT` | `--env`      | `default`               | Group servers into isolated environments.       |
+| `TETHERD_DEBUG`       | `--debug`    | `false`                 | Enable detailed logging.                        |
+
+---
+
+**Requirement:** You need a [Tether](https://github.com/MizuchiLabs/tether) server running to collect these updates.
 
 ## License
 
-Apache 2.0 License - see [LICENSE](LICENSE) for details.
+Apache 2.0 License - see [LICENSE](LICENSE) for details
