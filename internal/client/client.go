@@ -4,7 +4,10 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -65,11 +68,13 @@ func (c *Client) Update(ctx context.Context, config []byte) {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+
+	// Generate the HMAC Signature
 	if c.cfg.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
-	}
-	if c.cfg.Version != "" {
-		req.Header.Set("Agent-Version", c.cfg.Version)
+		mac := hmac.New(sha256.New, []byte(c.cfg.Token))
+		mac.Write(b)
+		signature := hex.EncodeToString(mac.Sum(nil))
+		req.Header.Set("X-Signature", signature)
 	}
 
 	resp, err := c.httpClient.Do(req)
