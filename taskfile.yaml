@@ -13,7 +13,7 @@ tasks:
   build:
     desc: Build binary
     cmds:
-      - go build -ldflags="-s -w" -trimpath -o bin/tetherd
+      - go build -ldflags="-s -w" -trimpath -o tetherd
 
   lint:
     desc: Run go vet & lint
