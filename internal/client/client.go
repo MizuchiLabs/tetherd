@@ -51,6 +51,9 @@ func (c *Client) Connect(ctx context.Context) {
 }
 
 func (c *Client) handleConnection(ctx context.Context, url string) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	dialOptions := &websocket.DialOptions{
 		HTTPClient: &http.Client{},
 	}
@@ -66,6 +69,17 @@ func (c *Client) handleConnection(ctx context.Context, url string) error {
 	}
 	defer func() { _ = conn.CloseNow() }()
 	slog.Info("Connected to Tether server")
+
+	// Read loop to detect disconnects and process control frames
+	go func() {
+		defer cancel()
+		for {
+			_, _, err := conn.Read(ctx)
+			if err != nil {
+				return
+			}
+		}
+	}()
 
 	select {
 	case latest := <-c.cfg.Updates:
@@ -84,7 +98,6 @@ func (c *Client) handleConnection(ctx context.Context, url string) error {
 		if err := wsjson.Write(ctx, conn, req); err != nil {
 			return err // Server dropped us immediately, back to retry loop
 		}
-		slog.Debug("Pushed cached config to server after reconnect")
 	}
 
 	// Listen for config updates on the channel
@@ -93,16 +106,16 @@ func (c *Client) handleConnection(ctx context.Context, url string) error {
 		case <-ctx.Done():
 			return conn.Close(websocket.StatusNormalClosure, "agent shutting down")
 		case newConfig := <-c.cfg.Updates:
+			c.latestUpdate = newConfig
 			req := UpdateRequest{
 				Name:   c.cfg.Hostname,
 				Env:    c.cfg.Environment,
-				Config: json.RawMessage(newConfig),
+				Config: json.RawMessage(c.latestUpdate),
 			}
 
 			if err = wsjson.Write(ctx, conn, req); err != nil {
 				return err // Returns to the reconnect loop
 			}
-			slog.Debug("Pushed config update to server")
 		}
 	}
 }

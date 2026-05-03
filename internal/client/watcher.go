@@ -100,6 +100,12 @@ func (w *Watcher) syncContainers(ctx context.Context) {
 		return
 	}
 
+	// Drain the channel to ensure we only queue the latest config
+	select {
+	case <-w.cfg.Updates:
+	default:
+	}
+
 	select {
 	case w.cfg.Updates <- config:
 		slog.Debug("Config pushed to WebSocket channel")
