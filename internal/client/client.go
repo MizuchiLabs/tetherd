@@ -37,9 +37,8 @@ func (c *Client) Connect(ctx context.Context) {
 	url = strings.TrimRight(url, "/") + "/api/ws"
 
 	for {
-		err := c.handleConnection(ctx, url)
-		if err != nil {
-			slog.Error("WebSocket connection lost, retrying in 5s...", "error", err)
+		if err := c.handler(ctx, url); err != nil {
+			slog.Error("Connection lost, retrying...", "error", err)
 		}
 
 		select {
@@ -51,7 +50,7 @@ func (c *Client) Connect(ctx context.Context) {
 	}
 }
 
-func (c *Client) handleConnection(ctx context.Context, url string) error {
+func (c *Client) handler(ctx context.Context, url string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -95,12 +94,11 @@ func (c *Client) handleConnection(ctx context.Context, url string) error {
 
 	// push the last known state on reconnect
 	if c.latestUpdate != nil {
-		req := UpdateRequest{
+		if err := wsjson.Write(ctx, conn, UpdateRequest{
 			Name:   c.cfg.Hostname,
 			Env:    c.cfg.Environment,
 			Config: json.RawMessage(c.latestUpdate),
-		}
-		if err := wsjson.Write(ctx, conn, req); err != nil {
+		}); err != nil {
 			return err // back to retry loop
 		}
 	}
@@ -111,13 +109,11 @@ func (c *Client) handleConnection(ctx context.Context, url string) error {
 			return conn.Close(websocket.StatusNormalClosure, "agent shutting down")
 		case newConfig := <-c.cfg.Updates:
 			c.latestUpdate = newConfig
-			req := UpdateRequest{
+			if err = wsjson.Write(ctx, conn, UpdateRequest{
 				Name:   c.cfg.Hostname,
 				Env:    c.cfg.Environment,
 				Config: json.RawMessage(c.latestUpdate),
-			}
-
-			if err = wsjson.Write(ctx, conn, req); err != nil {
+			}); err != nil {
 				return err
 			}
 		}

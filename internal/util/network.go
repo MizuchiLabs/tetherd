@@ -6,15 +6,10 @@ import (
 	"net"
 )
 
-// GetOutboundIP gets the preferred outbound ip of this machine
 func GetOutboundIP() string {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
-		slog.Warn(
-			"Could not detect outbound IP automatically",
-			"error",
-			err,
-		)
+		slog.Warn("Could not detect outbound IP automatically", "error", err)
 		return "127.0.0.1"
 	}
 	defer func() { _ = conn.Close() }()
