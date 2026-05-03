@@ -54,7 +54,6 @@ func (w *Watcher) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("Docker watcher stopping")
 			return
 		case err, ok := <-errs:
 			if !ok || err != nil {
