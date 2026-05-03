@@ -3,6 +3,7 @@ package client
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -54,8 +55,14 @@ func (c *Client) handleConnection(ctx context.Context, url string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: c.cfg.Insecure} // #nosec - G402
+	httpClient := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
+	}
 	dialOptions := &websocket.DialOptions{
-		HTTPClient: &http.Client{},
+		HTTPClient: httpClient,
 	}
 
 	if c.cfg.Token != "" {
@@ -63,12 +70,14 @@ func (c *Client) handleConnection(ctx context.Context, url string) error {
 		dialOptions.HTTPHeader.Set("Authorization", "Bearer "+c.cfg.Token)
 	}
 
-	conn, _, err := websocket.Dial(ctx, url, dialOptions)
+	dialCtx, dialCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer dialCancel()
+
+	conn, _, err := websocket.Dial(dialCtx, url, dialOptions)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.CloseNow() }()
-	slog.Info("Connected to Tether server")
 
 	// Read loop to detect disconnects and process control frames
 	go func() {
