@@ -192,9 +192,7 @@ func processHTTPServers(
 	portMap map[string]string,
 ) {
 	if len(lb.Servers) == 0 {
-		lb.Servers = []dynamic.Server{{
-			URL: fmt.Sprintf("http://%s:%s", hostIP, defaultPort),
-		}}
+		lb.Servers = []dynamic.Server{{URL: fmt.Sprintf("http://%s:%s", hostIP, defaultPort)}}
 		return
 	}
 
