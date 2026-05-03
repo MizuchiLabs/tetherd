@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -41,12 +42,11 @@ func (c *Client) Connect(ctx context.Context) {
 			slog.Error("WebSocket connection lost, retrying in 5s...", "error", err)
 		}
 
-		// Prevent tight looping on connection failure
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(5 * time.Second):
-			// retry
+		case <-time.After(time.Duration(3+rand.Intn(4)) * time.Second):
+			// retry with some jitter
 		}
 	}
 }
@@ -57,12 +57,8 @@ func (c *Client) handleConnection(ctx context.Context, url string) error {
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: c.cfg.Insecure} // #nosec - G402
-	httpClient := &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: transport,
-	}
 	dialOptions := &websocket.DialOptions{
-		HTTPClient: httpClient,
+		HTTPClient: &http.Client{Transport: transport},
 	}
 
 	if c.cfg.Token != "" {
@@ -79,9 +75,10 @@ func (c *Client) handleConnection(ctx context.Context, url string) error {
 	}
 	defer func() { _ = conn.CloseNow() }()
 
-	// Read loop to detect disconnects and process control frames
+	// read loop to detect disconnects
 	go func() {
 		defer cancel()
+		conn.SetReadLimit(32768) // prevent memory exhaustion
 		for {
 			_, _, err := conn.Read(ctx)
 			if err != nil {
@@ -94,10 +91,9 @@ func (c *Client) handleConnection(ctx context.Context, url string) error {
 	case latest := <-c.cfg.Updates:
 		c.latestUpdate = latest
 	default:
-		// Channel is empty, proceed with existing cache
 	}
 
-	// Immediately push the last known state on reconnect
+	// push the last known state on reconnect
 	if c.latestUpdate != nil {
 		req := UpdateRequest{
 			Name:   c.cfg.Hostname,
@@ -105,11 +101,10 @@ func (c *Client) handleConnection(ctx context.Context, url string) error {
 			Config: json.RawMessage(c.latestUpdate),
 		}
 		if err := wsjson.Write(ctx, conn, req); err != nil {
-			return err // Server dropped us immediately, back to retry loop
+			return err // back to retry loop
 		}
 	}
 
-	// Listen for config updates on the channel
 	for {
 		select {
 		case <-ctx.Done():
@@ -123,7 +118,7 @@ func (c *Client) handleConnection(ctx context.Context, url string) error {
 			}
 
 			if err = wsjson.Write(ctx, conn, req); err != nil {
-				return err // Returns to the reconnect loop
+				return err
 			}
 		}
 	}

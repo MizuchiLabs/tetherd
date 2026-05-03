@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/traefik/paerser/parser"
 	"github.com/traefik/traefik/v3/pkg/config/dynamic"
+	"github.com/traefik/traefik/v3/pkg/tls"
 )
 
 // BuildTraefikConfig parses labels into a Traefik dynamic config and returns it as JSON
@@ -37,10 +40,10 @@ func BuildTraefikConfig(containers []container.Summary, hostIP string) ([]byte, 
 			continue
 		}
 
-		// Extract port mappings from Docker container
 		defaultPort, portMap := extractContainerPorts(c)
-		if defaultPort == "" {
-			slog.Debug("Container has no public ports, relying on explicit label ports", "container", containerName)
+		if len(portMap) == 0 {
+			slog.Debug("Container exposes no public ports, skipping", "container", containerName)
+			continue // skip, container is unreachable from the central server
 		}
 
 		// Process HTTP
@@ -120,11 +123,24 @@ func BuildTraefikConfig(containers []container.Summary, hostIP string) ([]byte, 
 		}
 
 		// Process TLS
-		if dyn.TLS != nil && (len(dyn.TLS.Stores) > 0 || len(dyn.TLS.Options) > 0) {
+		if dyn.TLS != nil {
 			if rootConfig.TLS == nil {
-				rootConfig.TLS = &dynamic.TLSConfiguration{}
+				rootConfig.TLS = &dynamic.TLSConfiguration{
+					Options: make(map[string]tls.Options),
+					Stores:  make(map[string]tls.Store),
+				}
 			}
-			rootConfig.TLS = dyn.TLS
+			if len(dyn.TLS.Certificates) > 0 {
+				rootConfig.TLS.Certificates = append(
+					rootConfig.TLS.Certificates,
+					dyn.TLS.Certificates...)
+			}
+			if dyn.TLS.Options != nil {
+				maps.Copy(rootConfig.TLS.Options, dyn.TLS.Options)
+			}
+			if dyn.TLS.Stores != nil {
+				maps.Copy(rootConfig.TLS.Stores, dyn.TLS.Stores)
+			}
 		}
 	}
 
@@ -134,19 +150,24 @@ func BuildTraefikConfig(containers []container.Summary, hostIP string) ([]byte, 
 // Helpers
 
 func extractContainerPorts(c container.Summary) (string, map[string]string) {
-	defaultPort := ""
 	portMap := make(map[string]string)
+	var publicPorts []int
 
 	for _, p := range c.Ports {
 		if p.PublicPort != 0 {
 			pub := strconv.Itoa(int(p.PublicPort))
 			priv := strconv.Itoa(int(p.PrivatePort))
 			portMap[priv] = pub
-			if defaultPort == "" {
-				defaultPort = pub
-			}
+			publicPorts = append(publicPorts, int(p.PublicPort))
 		}
 	}
+
+	defaultPort := ""
+	if len(publicPorts) > 0 {
+		slices.Sort(publicPorts)
+		defaultPort = strconv.Itoa(publicPorts[0])
+	}
+
 	return defaultPort, portMap
 }
 
@@ -158,7 +179,9 @@ func ensureHTTPService(config *dynamic.Configuration, svcName string) {
 	}
 	if _, ok := config.HTTP.Services[svcName]; !ok {
 		config.HTTP.Services[svcName] = &dynamic.Service{
-			LoadBalancer: &dynamic.ServersLoadBalancer{},
+			LoadBalancer: &dynamic.ServersLoadBalancer{
+				PassHostHeader: new(true), // default to true
+			},
 		}
 	}
 }
@@ -169,17 +192,45 @@ func processHTTPServers(
 	portMap map[string]string,
 ) {
 	if len(lb.Servers) == 0 {
-		lb.Servers = []dynamic.Server{{URL: fmt.Sprintf("http://%s:%s", hostIP, defaultPort)}}
+		lb.Servers = []dynamic.Server{{
+			URL: fmt.Sprintf("http://%s:%s", hostIP, defaultPort),
+		}}
 		return
 	}
-	for i, srv := range lb.Servers {
+
+	validServers := make([]dynamic.Server, 0, len(lb.Servers))
+	for _, srv := range lb.Servers {
+		fmt.Printf("srv: %#v\n", srv)
 		mapped := portMap[srv.Port]
 		if mapped == "" {
 			mapped = defaultPort
 		}
-		lb.Servers[i].URL = fmt.Sprintf("http://%s:%s", hostIP, mapped)
-		lb.Servers[i].Port = ""
+		if mapped == "" {
+			continue // Skip invalid servers
+		}
+
+		scheme := srv.Scheme
+		if scheme == "" {
+			if strings.HasPrefix(srv.URL, "https://") {
+				scheme = "https"
+			} else if strings.HasPrefix(srv.URL, "h2c://") {
+				scheme = "h2c"
+			} else {
+				scheme = "http"
+			}
+		}
+
+		// Bake everything into the final URL
+		srv.URL = fmt.Sprintf("%s://%s:%s", scheme, hostIP, mapped)
+
+		// Clean up fields
+		srv.Port = ""
+		srv.Scheme = ""
+
+		validServers = append(validServers, srv)
 	}
+
+	lb.Servers = validServers
 }
 
 // TCP Helpers
@@ -204,14 +255,22 @@ func processTCPServers(
 		lb.Servers = []dynamic.TCPServer{{Address: fmt.Sprintf("%s:%s", hostIP, defaultPort)}}
 		return
 	}
-	for i, srv := range lb.Servers {
+	validServers := make([]dynamic.TCPServer, 0, len(lb.Servers))
+	for _, srv := range lb.Servers {
 		mapped := portMap[srv.Port]
 		if mapped == "" {
 			mapped = defaultPort
 		}
-		lb.Servers[i].Address = fmt.Sprintf("%s:%s", hostIP, mapped)
-		lb.Servers[i].Port = ""
+		if mapped == "" {
+			continue
+		}
+		srv.Address = fmt.Sprintf("%s:%s", hostIP, mapped)
+		srv.Port = ""
+
+		validServers = append(validServers, srv)
 	}
+
+	lb.Servers = validServers
 }
 
 // UDP Helpers
@@ -238,18 +297,21 @@ func processUDPServers(
 		}
 		return
 	}
-	for i, srv := range lb.Servers {
+
+	validServers := make([]dynamic.UDPServer, 0, len(lb.Servers))
+	for _, srv := range lb.Servers {
 		mapped := portMap[srv.Port]
 		if mapped == "" {
-			if srv.Port != "" {
-				mapped = srv.Port
-			} else {
-				mapped = defaultPort
-			}
+			mapped = defaultPort
 		}
-		if mapped != "" {
-			lb.Servers[i].Address = fmt.Sprintf("%s:%s", hostIP, mapped)
+		if mapped == "" {
+			continue
 		}
-		lb.Servers[i].Port = ""
+		srv.Address = fmt.Sprintf("%s:%s", hostIP, mapped)
+		srv.Port = ""
+
+		validServers = append(validServers, srv)
 	}
+
+	lb.Servers = validServers
 }
