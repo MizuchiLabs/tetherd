@@ -60,7 +60,6 @@ Tetherd will tell the central server: _"Send traffic for `my-app.com` to `http:/
 | `TETHERD_SERVER`      | `--server`   | `http://127.0.0.1:3000` | URL of the central Tether server.               |
 | `TETHERD_TOKEN`       | `--token`    |                         | **Required**: Token matching the Tether server. |
 | `TETHERD_HOST_IP`     | `--host-ip`  | _(auto)_                | Manual override for this server's IP.           |
-| `TETHERD_INTERVAL`    | `--interval` | `30s`                   | How often to sync with the central server.      |
 | `TETHERD_ENVIRONMENT` | `--env`      | `default`               | Group servers into isolated environments.       |
 | `TETHERD_DEBUG`       | `--debug`    | `false`                 | Enable detailed logging.                        |
 

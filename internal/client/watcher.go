@@ -11,32 +11,23 @@ import (
 )
 
 type Watcher struct {
-	dockerCLI *client.Client
-	agentCLI  *Client
-	hostIP    string
-	interval  time.Duration
+	cli *client.Client
+	cfg *config.Config
 }
 
-func NewWatcher(agentCLI *Client, cfg *config.Config) (*Watcher, error) {
-	dockerCLI, err := client.New(client.FromEnv)
+func NewWatcher(cfg *config.Config) (*Watcher, error) {
+	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Watcher{
-		dockerCLI: dockerCLI,
-		agentCLI:  agentCLI,
-		hostIP:    cfg.HostIP,
-		interval:  cfg.Interval,
+		cli: cli,
+		cfg: cfg,
 	}, nil
 }
 
 func (w *Watcher) Start(ctx context.Context) {
-	slog.Info("Starting Docker watcher...")
-
-	ticker := time.NewTicker(w.interval)
-	defer ticker.Stop()
-
 	// Initial sync
 	w.syncContainers(ctx)
 
@@ -52,7 +43,7 @@ func (w *Watcher) Start(ctx context.Context) {
 		filters.Add("event", "remove")
 		filters.Add("event", "destroy")
 
-		res := w.dockerCLI.Events(ctx, client.EventsListOptions{Filters: filters})
+		res := w.cli.Events(ctx, client.EventsListOptions{Filters: filters})
 		stream = res.Messages
 		errs = res.Err
 	}
@@ -64,8 +55,6 @@ func (w *Watcher) Start(ctx context.Context) {
 		case <-ctx.Done():
 			slog.Info("Docker watcher stopping")
 			return
-		case <-ticker.C:
-			w.syncContainers(ctx)
 		case err, ok := <-errs:
 			if !ok || err != nil {
 				if ctx.Err() != nil {
@@ -96,7 +85,7 @@ func (w *Watcher) Start(ctx context.Context) {
 func (w *Watcher) syncContainers(ctx context.Context) {
 	filters := client.Filters{}
 	filters.Add("label", "traefik.enable=true")
-	containers, err := w.dockerCLI.ContainerList(
+	containers, err := w.cli.ContainerList(
 		ctx,
 		client.ContainerListOptions{All: false, Filters: filters},
 	)
@@ -105,11 +94,17 @@ func (w *Watcher) syncContainers(ctx context.Context) {
 		return
 	}
 
-	config, err := BuildTraefikConfig(containers.Items, w.hostIP)
+	config, err := BuildTraefikConfig(containers.Items, w.cfg.HostIP)
 	if err != nil {
 		slog.Error("Failed to build Traefik config", "error", err)
 		return
 	}
 
-	w.agentCLI.Update(ctx, config)
+	select {
+	case w.cfg.Updates <- config:
+		slog.Debug("Config pushed to WebSocket channel")
+	case <-ctx.Done():
+		return
+	default:
+	}
 }

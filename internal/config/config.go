@@ -4,7 +4,6 @@ package config
 import (
 	"context"
 	"os"
-	"time"
 
 	"github.com/mizuchilabs/tetherd/internal/util"
 	"github.com/urfave/cli/v3"
@@ -19,7 +18,7 @@ type Config struct {
 	Insecure    bool
 	Debug       bool
 	Version     string
-	Interval    time.Duration
+	Updates     chan []byte
 }
 
 // New loads configuration from environment variables
@@ -40,7 +39,7 @@ func New(ctx context.Context, cmd *cli.Command) (*Config, error) {
 	cfg.Server = cmd.String("server")
 	cfg.Environment = cmd.String("env")
 	cfg.Token = cmd.String("token")
-	cfg.Interval = cmd.Duration("interval")
+	cfg.Updates = make(chan []byte, 1)
 
 	return &cfg, nil
 }

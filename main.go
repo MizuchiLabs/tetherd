@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/mizuchilabs/tetherd/internal/client"
 	"github.com/mizuchilabs/tetherd/internal/config"
@@ -46,18 +45,14 @@ func main() {
 				return fmt.Errorf("failed to initialize config: %w", err)
 			}
 
-			cli, err := client.NewClient(cfg)
-			if err != nil {
-				return fmt.Errorf("failed to initialize docker client: %w", err)
-			}
-
-			// Start Docker watcher
-			watcher, err := client.NewWatcher(cli, cfg)
+			cli := client.NewClient(cfg)
+			watcher, err := client.NewWatcher(cfg)
 			if err != nil {
 				return fmt.Errorf("failed to initialize docker watcher: %w", err)
 			}
 
 			slog.Info("Starting tetherd", "version", Version)
+			go cli.Connect(ctx)
 			go watcher.Start(ctx)
 			<-ctx.Done()
 
@@ -96,13 +91,6 @@ func main() {
 				Usage:   "The isolated environment group to send updates to",
 				Value:   "default",
 				Sources: cli.EnvVars("TETHERD_ENVIRONMENT"),
-			},
-			&cli.DurationFlag{
-				Name:    "interval",
-				Aliases: []string{"i"},
-				Usage:   "The interval at which to send updates to the central Tether server",
-				Value:   30 * time.Second,
-				Sources: cli.EnvVars("TETHERD_INTERVAL"),
 			},
 		},
 	}
