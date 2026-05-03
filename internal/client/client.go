@@ -45,7 +45,7 @@ func (c *Client) Connect(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(time.Duration(3+rand.Intn(4)) * time.Second):
+		case <-time.After(time.Duration(3+rand.Intn(4)) * time.Second): // #nosec - G404
 			// retry with some jitter
 		}
 	}
