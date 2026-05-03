@@ -39,9 +39,8 @@ func (w *Watcher) Start(ctx context.Context) {
 		filters.Add("type", "container")
 		filters.Add("event", "start")
 		filters.Add("event", "die")
-		filters.Add("event", "stop")
-		filters.Add("event", "remove")
-		filters.Add("event", "destroy")
+		filters.Add("event", "health_status: healthy")
+		filters.Add("event", "health_status: unhealthy")
 
 		res := w.cli.Events(ctx, client.EventsListOptions{Filters: filters})
 		stream = res.Messages
@@ -50,6 +49,8 @@ func (w *Watcher) Start(ctx context.Context) {
 
 	startStream()
 
+	// Timer for debouncing rapid events (docker-compose)
+	var debounceTimer *time.Timer
 	for {
 		select {
 		case <-ctx.Done():
@@ -77,7 +78,13 @@ func (w *Watcher) Start(ctx context.Context) {
 				continue
 			}
 			slog.Debug("Docker event received", "action", msg.Action, "container", msg.Actor.ID)
-			w.syncContainers(ctx)
+
+			if debounceTimer != nil {
+				debounceTimer.Stop()
+			}
+			debounceTimer = time.AfterFunc(100*time.Millisecond, func() {
+				w.syncContainers(ctx)
+			})
 		}
 	}
 }
