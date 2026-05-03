@@ -200,7 +200,6 @@ func processHTTPServers(
 
 	validServers := make([]dynamic.Server, 0, len(lb.Servers))
 	for _, srv := range lb.Servers {
-		fmt.Printf("srv: %#v\n", srv)
 		mapped := portMap[srv.Port]
 		if mapped == "" {
 			mapped = defaultPort
