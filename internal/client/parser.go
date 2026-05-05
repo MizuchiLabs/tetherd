@@ -152,6 +152,7 @@ func BuildTraefikConfig(containers []container.Summary, hostIP string) ([]byte, 
 func extractContainerPorts(c container.Summary) (string, map[string]string) {
 	portMap := make(map[string]string)
 	var publicPorts []int
+	isHostMode := c.HostConfig.NetworkMode == "host"
 
 	for _, p := range c.Ports {
 		if p.PublicPort != 0 {
@@ -159,6 +160,10 @@ func extractContainerPorts(c container.Summary) (string, map[string]string) {
 			priv := strconv.Itoa(int(p.PrivatePort))
 			portMap[priv] = pub
 			publicPorts = append(publicPorts, int(p.PublicPort))
+		} else if isHostMode && p.PrivatePort != 0 {
+			port := strconv.Itoa(int(p.PrivatePort))
+			portMap[port] = port
+			publicPorts = append(publicPorts, int(p.PrivatePort))
 		}
 	}
 
