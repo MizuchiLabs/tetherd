@@ -41,9 +41,12 @@ func BuildTraefikConfig(containers []container.Summary, hostIP string) ([]byte, 
 		}
 
 		defaultPort, portMap := extractContainerPorts(c)
-		if len(portMap) == 0 {
+		isHostMode := c.HostConfig.NetworkMode == "host"
+
+		// If no public ports exist AND it's not host network, it's unreachable
+		if len(portMap) == 0 && !isHostMode {
 			slog.Debug("Container exposes no public ports, skipping", "container", containerName)
-			continue // skip, container is unreachable from the central server
+			continue
 		}
 
 		// Process HTTP
@@ -65,9 +68,17 @@ func BuildTraefikConfig(containers []container.Summary, hostIP string) ([]byte, 
 			}
 			for name, svc := range dyn.HTTP.Services {
 				if svc.LoadBalancer != nil {
-					processHTTPServers(svc.LoadBalancer, hostIP, defaultPort, portMap)
+					processHTTPServers(svc.LoadBalancer, hostIP, defaultPort, portMap, isHostMode)
+				}
+				if svc.LoadBalancer == nil || len(svc.LoadBalancer.Servers) == 0 {
+					continue // Skip invalid services
 				}
 				rootConfig.HTTP.Services[name] = svc
+			}
+			for name, r := range rootConfig.HTTP.Routers {
+				if _, ok := rootConfig.HTTP.Services[r.Service]; !ok {
+					delete(rootConfig.HTTP.Routers, name) // Cascade cleanup
+				}
 			}
 			maps.Copy(rootConfig.HTTP.Middlewares, dyn.HTTP.Middlewares)
 		}
@@ -91,9 +102,17 @@ func BuildTraefikConfig(containers []container.Summary, hostIP string) ([]byte, 
 			}
 			for name, svc := range dyn.TCP.Services {
 				if svc.LoadBalancer != nil {
-					processTCPServers(svc.LoadBalancer, hostIP, defaultPort, portMap)
+					processTCPServers(svc.LoadBalancer, hostIP, defaultPort, portMap, isHostMode)
+				}
+				if svc.LoadBalancer == nil || len(svc.LoadBalancer.Servers) == 0 {
+					continue // Skip invalid services
 				}
 				rootConfig.TCP.Services[name] = svc
+			}
+			for name, r := range rootConfig.TCP.Routers {
+				if _, ok := rootConfig.TCP.Services[r.Service]; !ok {
+					delete(rootConfig.TCP.Routers, name) // Cascade cleanup
+				}
 			}
 			maps.Copy(rootConfig.TCP.Middlewares, dyn.TCP.Middlewares)
 		}
@@ -116,9 +135,17 @@ func BuildTraefikConfig(containers []container.Summary, hostIP string) ([]byte, 
 			}
 			for name, svc := range dyn.UDP.Services {
 				if svc.LoadBalancer != nil {
-					processUDPServers(svc.LoadBalancer, hostIP, defaultPort, portMap)
+					processUDPServers(svc.LoadBalancer, hostIP, defaultPort, portMap, isHostMode)
+				}
+				if svc.LoadBalancer == nil || len(svc.LoadBalancer.Servers) == 0 {
+					continue // Skip invalid services
 				}
 				rootConfig.UDP.Services[name] = svc
+			}
+			for name, r := range rootConfig.UDP.Routers {
+				if _, ok := rootConfig.UDP.Services[r.Service]; !ok {
+					delete(rootConfig.UDP.Routers, name) // Cascade cleanup
+				}
 			}
 		}
 
@@ -133,7 +160,8 @@ func BuildTraefikConfig(containers []container.Summary, hostIP string) ([]byte, 
 			if len(dyn.TLS.Certificates) > 0 {
 				rootConfig.TLS.Certificates = append(
 					rootConfig.TLS.Certificates,
-					dyn.TLS.Certificates...)
+					dyn.TLS.Certificates...,
+				)
 			}
 			if dyn.TLS.Options != nil {
 				maps.Copy(rootConfig.TLS.Options, dyn.TLS.Options)
@@ -152,7 +180,6 @@ func BuildTraefikConfig(containers []container.Summary, hostIP string) ([]byte, 
 func extractContainerPorts(c container.Summary) (string, map[string]string) {
 	portMap := make(map[string]string)
 	var publicPorts []int
-	isHostMode := c.HostConfig.NetworkMode == "host"
 
 	for _, p := range c.Ports {
 		if p.PublicPort != 0 {
@@ -160,10 +187,6 @@ func extractContainerPorts(c container.Summary) (string, map[string]string) {
 			priv := strconv.Itoa(int(p.PrivatePort))
 			portMap[priv] = pub
 			publicPorts = append(publicPorts, int(p.PublicPort))
-		} else if isHostMode && p.PrivatePort != 0 {
-			port := strconv.Itoa(int(p.PrivatePort))
-			portMap[port] = port
-			publicPorts = append(publicPorts, int(p.PrivatePort))
 		}
 	}
 
@@ -195,9 +218,12 @@ func processHTTPServers(
 	lb *dynamic.ServersLoadBalancer,
 	hostIP, defaultPort string,
 	portMap map[string]string,
+	isHostMode bool,
 ) {
 	if len(lb.Servers) == 0 {
-		lb.Servers = []dynamic.Server{{URL: fmt.Sprintf("http://%s:%s", hostIP, defaultPort)}}
+		if defaultPort != "" {
+			lb.Servers = []dynamic.Server{{URL: fmt.Sprintf("http://%s:%s", hostIP, defaultPort)}}
+		}
 		return
 	}
 
@@ -205,7 +231,12 @@ func processHTTPServers(
 	for _, srv := range lb.Servers {
 		mapped := portMap[srv.Port]
 		if mapped == "" {
-			mapped = defaultPort
+			// Trust explicit port label for host mode where mapping doesn't exist
+			if isHostMode && srv.Port != "" {
+				mapped = srv.Port
+			} else {
+				mapped = defaultPort
+			}
 		}
 		if mapped == "" {
 			continue // Skip invalid servers
@@ -252,16 +283,25 @@ func processTCPServers(
 	lb *dynamic.TCPServersLoadBalancer,
 	hostIP, defaultPort string,
 	portMap map[string]string,
+	isHostMode bool,
 ) {
 	if len(lb.Servers) == 0 {
-		lb.Servers = []dynamic.TCPServer{{Address: fmt.Sprintf("%s:%s", hostIP, defaultPort)}}
+		if defaultPort != "" {
+			lb.Servers = []dynamic.TCPServer{{Address: fmt.Sprintf("%s:%s", hostIP, defaultPort)}}
+		} else {
+			lb.Servers = nil
+		}
 		return
 	}
 	validServers := make([]dynamic.TCPServer, 0, len(lb.Servers))
 	for _, srv := range lb.Servers {
 		mapped := portMap[srv.Port]
 		if mapped == "" {
-			mapped = defaultPort
+			if isHostMode && srv.Port != "" {
+				mapped = srv.Port
+			} else {
+				mapped = defaultPort
+			}
 		}
 		if mapped == "" {
 			continue
@@ -292,10 +332,13 @@ func processUDPServers(
 	lb *dynamic.UDPServersLoadBalancer,
 	hostIP, defaultPort string,
 	portMap map[string]string,
+	isHostMode bool,
 ) {
 	if len(lb.Servers) == 0 {
 		if defaultPort != "" {
 			lb.Servers = []dynamic.UDPServer{{Address: fmt.Sprintf("%s:%s", hostIP, defaultPort)}}
+		} else {
+			lb.Servers = nil
 		}
 		return
 	}
@@ -304,7 +347,11 @@ func processUDPServers(
 	for _, srv := range lb.Servers {
 		mapped := portMap[srv.Port]
 		if mapped == "" {
-			mapped = defaultPort
+			if isHostMode && srv.Port != "" {
+				mapped = srv.Port
+			} else {
+				mapped = defaultPort
+			}
 		}
 		if mapped == "" {
 			continue
