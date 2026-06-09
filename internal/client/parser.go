@@ -43,11 +43,9 @@ func BuildTraefikConfig(containers []container.Summary, hostIP string) ([]byte, 
 		defaultPort, portMap := extractContainerPorts(c)
 		isHostMode := c.HostConfig.NetworkMode == "host"
 
-		// If no public ports exist AND it's not host network, it's unreachable
-		if len(portMap) == 0 && !isHostMode {
-			slog.Debug("Container exposes no public ports, skipping", "container", containerName)
-			continue
-		}
+		// We no longer skip containers with zero exposed ports here.
+		// If they use Swarm Ingress or MacVLAN, portMap is empty but they might provide an explicit port label.
+		// We'll let the server processing logic handle the rejection if no valid port is found.
 
 		// Process HTTP
 		if dyn.HTTP != nil {
@@ -68,7 +66,8 @@ func BuildTraefikConfig(containers []container.Summary, hostIP string) ([]byte, 
 			}
 			for name, svc := range dyn.HTTP.Services {
 				if svc.LoadBalancer != nil {
-					processHTTPServers(svc.LoadBalancer, hostIP, defaultPort, portMap, isHostMode)
+					explicitPort := extractServicePort(c.Labels, "http", name)
+					processHTTPServers(svc.LoadBalancer, hostIP, defaultPort, portMap, isHostMode, explicitPort)
 				}
 				if svc.LoadBalancer == nil || len(svc.LoadBalancer.Servers) == 0 {
 					continue // Skip invalid services
@@ -102,7 +101,8 @@ func BuildTraefikConfig(containers []container.Summary, hostIP string) ([]byte, 
 			}
 			for name, svc := range dyn.TCP.Services {
 				if svc.LoadBalancer != nil {
-					processTCPServers(svc.LoadBalancer, hostIP, defaultPort, portMap, isHostMode)
+					explicitPort := extractServicePort(c.Labels, "tcp", name)
+					processTCPServers(svc.LoadBalancer, hostIP, defaultPort, portMap, isHostMode, explicitPort)
 				}
 				if svc.LoadBalancer == nil || len(svc.LoadBalancer.Servers) == 0 {
 					continue // Skip invalid services
@@ -135,7 +135,8 @@ func BuildTraefikConfig(containers []container.Summary, hostIP string) ([]byte, 
 			}
 			for name, svc := range dyn.UDP.Services {
 				if svc.LoadBalancer != nil {
-					processUDPServers(svc.LoadBalancer, hostIP, defaultPort, portMap, isHostMode)
+					explicitPort := extractServicePort(c.Labels, "udp", name)
+					processUDPServers(svc.LoadBalancer, hostIP, defaultPort, portMap, isHostMode, explicitPort)
 				}
 				if svc.LoadBalancer == nil || len(svc.LoadBalancer.Servers) == 0 {
 					continue // Skip invalid services
@@ -176,6 +177,16 @@ func BuildTraefikConfig(containers []container.Summary, hostIP string) ([]byte, 
 }
 
 // Helpers
+
+func extractServicePort(labels map[string]string, protocol, serviceName string) string {
+	key := fmt.Sprintf("traefik.%s.services.%s.loadbalancer.server.port", protocol, serviceName)
+	for k, v := range labels {
+		if strings.EqualFold(k, key) {
+			return v
+		}
+	}
+	return ""
+}
 
 func extractContainerPorts(c container.Summary) (string, map[string]string) {
 	portMap := make(map[string]string)
@@ -219,20 +230,39 @@ func processHTTPServers(
 	hostIP, defaultPort string,
 	portMap map[string]string,
 	isHostMode bool,
+	explicitPort string,
 ) {
 	if len(lb.Servers) == 0 {
-		if defaultPort != "" {
+		if explicitPort != "" {
+			lb.Servers = []dynamic.Server{{Port: explicitPort}}
+		} else if defaultPort != "" {
 			lb.Servers = []dynamic.Server{{URL: fmt.Sprintf("http://%s:%s", hostIP, defaultPort)}}
+			return
+		} else {
+			return
 		}
-		return
+	} else if explicitPort != "" {
+		lb.Servers[0].Port = explicitPort
 	}
 
 	validServers := make([]dynamic.Server, 0, len(lb.Servers))
 	for _, srv := range lb.Servers {
 		mapped := portMap[srv.Port]
 		if mapped == "" {
-			// Trust explicit port label for host mode where mapping doesn't exist
-			if isHostMode && srv.Port != "" {
+			isPublicPort := false
+			for _, pub := range portMap {
+				if pub == srv.Port {
+					isPublicPort = true
+					break
+				}
+			}
+
+			if isPublicPort {
+				mapped = srv.Port
+			} else if isHostMode && srv.Port != "" {
+				mapped = srv.Port
+			} else if srv.Port != "" && defaultPort == "" {
+				// Container has no mapped ports (e.g., Swarm ingress, MacVLAN), trust the explicit port
 				mapped = srv.Port
 			} else {
 				mapped = defaultPort
@@ -284,20 +314,40 @@ func processTCPServers(
 	hostIP, defaultPort string,
 	portMap map[string]string,
 	isHostMode bool,
+	explicitPort string,
 ) {
 	if len(lb.Servers) == 0 {
-		if defaultPort != "" {
+		if explicitPort != "" {
+			lb.Servers = []dynamic.TCPServer{{Port: explicitPort}}
+		} else if defaultPort != "" {
 			lb.Servers = []dynamic.TCPServer{{Address: fmt.Sprintf("%s:%s", hostIP, defaultPort)}}
+			return
 		} else {
 			lb.Servers = nil
+			return
 		}
-		return
+	} else if explicitPort != "" {
+		lb.Servers[0].Port = explicitPort
 	}
+
 	validServers := make([]dynamic.TCPServer, 0, len(lb.Servers))
 	for _, srv := range lb.Servers {
 		mapped := portMap[srv.Port]
 		if mapped == "" {
-			if isHostMode && srv.Port != "" {
+			isPublicPort := false
+			for _, pub := range portMap {
+				if pub == srv.Port {
+					isPublicPort = true
+					break
+				}
+			}
+
+			if isPublicPort {
+				mapped = srv.Port
+			} else if isHostMode && srv.Port != "" {
+				mapped = srv.Port
+			} else if srv.Port != "" && defaultPort == "" {
+				// Container has no mapped ports (e.g., Swarm ingress, MacVLAN), trust the explicit port
 				mapped = srv.Port
 			} else {
 				mapped = defaultPort
@@ -333,21 +383,40 @@ func processUDPServers(
 	hostIP, defaultPort string,
 	portMap map[string]string,
 	isHostMode bool,
+	explicitPort string,
 ) {
 	if len(lb.Servers) == 0 {
-		if defaultPort != "" {
+		if explicitPort != "" {
+			lb.Servers = []dynamic.UDPServer{{Port: explicitPort}}
+		} else if defaultPort != "" {
 			lb.Servers = []dynamic.UDPServer{{Address: fmt.Sprintf("%s:%s", hostIP, defaultPort)}}
+			return
 		} else {
 			lb.Servers = nil
+			return
 		}
-		return
+	} else if explicitPort != "" {
+		lb.Servers[0].Port = explicitPort
 	}
 
 	validServers := make([]dynamic.UDPServer, 0, len(lb.Servers))
 	for _, srv := range lb.Servers {
 		mapped := portMap[srv.Port]
 		if mapped == "" {
-			if isHostMode && srv.Port != "" {
+			isPublicPort := false
+			for _, pub := range portMap {
+				if pub == srv.Port {
+					isPublicPort = true
+					break
+				}
+			}
+
+			if isPublicPort {
+				mapped = srv.Port
+			} else if isHostMode && srv.Port != "" {
+				mapped = srv.Port
+			} else if srv.Port != "" && defaultPort == "" {
+				// Container has no mapped ports (e.g., Swarm ingress, MacVLAN), trust the explicit port
 				mapped = srv.Port
 			} else {
 				mapped = defaultPort
