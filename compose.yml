@@ -1,0 +1,76 @@
+# Multiple scenarios to test the various configurations of exposed ports.
+
+services:
+  # Scenario 1: Standard deployment without specifying a port.
+  # Tetherd should automatically pick the lowest exposed public port (8080).
+  scenario-default:
+    image: traefik/whoami:latest
+    ports:
+      - "8080:80"
+    labels:
+      traefik.enable: true
+      traefik.http.routers.default.rule: Host(`default.local`)
+
+  # Scenario 2: Multiple exposed ports, but the label specifies the PRIVATE port (80).
+  # Tetherd should map private port 80 -> public port 8081.
+  scenario-private-port:
+    image: traefik/whoami:latest
+    ports:
+      - "8081:80"
+      - "8082:8080"
+    labels:
+      traefik.enable: true
+      traefik.http.routers.private.rule: Host(`private.local`)
+      traefik.http.services.private.loadbalancer.server.port: 80
+
+  # Scenario 3: Multiple exposed ports, but the label specifies the PUBLIC port (8084).
+  # Tetherd should verify 8084 is a valid public port and use it directly.
+  scenario-public-port:
+    image: traefik/whoami:latest
+    ports:
+      - "8083:80"
+      - "8084:8080" # We want traffic routed here
+    labels:
+      traefik.enable: true
+      traefik.http.routers.public.rule: Host(`public.local`)
+      traefik.http.services.public.loadbalancer.server.port: 8084
+
+  # Scenario 4: Multiple explicit Traefik services in a single container.
+  # Tetherd should correctly map port 80 to 8085, and port 81 to 8086.
+  scenario-multiple-services:
+    image: traefik/whoami:latest
+    ports:
+      - "8085:80"
+      - "8086:81"
+    labels:
+      traefik.enable: true
+      # Service 1
+      traefik.http.routers.multi1.rule: Host(`multi1.local`)
+      traefik.http.routers.multi1.service: multi1
+      traefik.http.services.multi1.loadbalancer.server.port: 80
+      # Service 2
+      traefik.http.routers.multi2.rule: Host(`multi2.local`)
+      traefik.http.routers.multi2.service: multi2
+      traefik.http.services.multi2.loadbalancer.server.port: 81
+
+  # Scenario 5: Host network mode.
+  # No ports are mapped via Docker, so Tetherd MUST blindly trust the explicit port (8087).
+  scenario-host-mode:
+    image: traefik/whoami:latest
+    command: --port 8087
+    network_mode: host
+    labels:
+      traefik.enable: true
+      traefik.http.routers.hostmode.rule: Host(`hostmode.local`)
+      traefik.http.services.hostmode.loadbalancer.server.port: 8087
+
+  # Scenario 6: User makes a typo and specifies an invalid/unmapped port (9999).
+  # Tetherd should detect it's invalid and fallback to the default mapped port (8088).
+  scenario-invalid-port:
+    image: traefik/whoami:latest
+    ports:
+      - "8088:80"
+    labels:
+      traefik.enable: true
+      traefik.http.routers.invalid.rule: Host(`invalid.local`)
+      traefik.http.services.invalid.loadbalancer.server.port: 9999
