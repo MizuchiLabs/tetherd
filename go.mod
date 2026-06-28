@@ -8,7 +8,7 @@ require (
 	github.com/moby/moby/client v0.5.0
 	github.com/traefik/paerser v0.2.3
 	github.com/traefik/traefik/v3 v3.7.5
-	github.com/urfave/cli/v3 v3.10.0
+	github.com/urfave/cli/v3 v3.10.1
 )
 
 require (
