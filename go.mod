@@ -7,7 +7,7 @@ require (
 	github.com/moby/moby/api v1.55.0
 	github.com/moby/moby/client v0.5.0
 	github.com/traefik/paerser v0.2.3
-	github.com/traefik/traefik/v3 v3.7.5
+	github.com/traefik/traefik/v3 v3.7.6
 	github.com/urfave/cli/v3 v3.10.1
 )
 
@@ -27,7 +27,7 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
-	github.com/go-acme/lego/v4 v4.35.2 // indirect
+	github.com/go-acme/lego/v5 v5.2.2 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-kit/log v0.2.1 // indirect
 	github.com/go-logfmt/logfmt v0.6.1 // indirect
@@ -112,6 +112,7 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.0 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
+	software.sslmate.com/src/go-pkcs12 v0.7.1 // indirect
 )
 
 // Workaround for https://github.com/traefik/traefik/issues/13115
