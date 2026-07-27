@@ -5,7 +5,7 @@ go 1.26.2
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/moby/moby/api v1.55.0
-	github.com/moby/moby/client v0.5.0
+	github.com/moby/moby/client v0.5.1
 	github.com/traefik/paerser v0.2.3
 	github.com/traefik/traefik/v3 v3.7.9
 	github.com/urfave/cli/v3 v3.10.1
