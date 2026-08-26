@@ -7,7 +7,7 @@ require (
 	github.com/moby/moby/api v1.55.0
 	github.com/moby/moby/client v0.5.1
 	github.com/traefik/paerser v0.2.3
-	github.com/traefik/traefik/v3 v3.7.11
+	github.com/traefik/traefik/v3 v3.7.12
 	github.com/urfave/cli/v3 v3.11.0
 )
 
