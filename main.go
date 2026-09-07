@@ -3,15 +3,16 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
+
+	"github.com/mizuchilabs/kata/buildinfo"
+	"github.com/mizuchilabs/kata/logx"
+	"github.com/mizuchilabs/kata/sigx"
+	"github.com/urfave/cli/v3"
 
 	"github.com/mizuchilabs/tetherd/internal/client"
 	"github.com/mizuchilabs/tetherd/internal/config"
-	"github.com/urfave/cli/v3"
 )
 
 var (
@@ -25,17 +26,10 @@ func main() {
 		EnableShellCompletion: true,
 		Suggest:               true,
 		Name:                  "tetherd",
-		Version:               fmt.Sprintf("%s (commit: %s, built: %s)", Version, Commit, Date),
+		Version:               buildinfo.String(),
 		Usage:                 "traefik agent for distributed nodes",
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			level := slog.LevelInfo
-			if cmd.Bool("debug") {
-				level = slog.LevelDebug
-			}
-			slog.SetDefault(
-				slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})),
-			)
-
+			logx.Init(cmd.Bool("debug"))
 			if _, err := os.Stat("/var/run/docker.sock"); err != nil {
 				slog.Warn("Docker socket not found", "path", "/var/run/docker.sock")
 			}
@@ -95,11 +89,8 @@ func main() {
 		},
 	}
 
-	// Graceful shutdown
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	if err := cmd.Run(ctx, os.Args); err != nil {
-		log.Fatal(err)
+	if err := cmd.Run(sigx.NotifyContext(), os.Args); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", cmd.Name, err)
+		os.Exit(1)
 	}
 }

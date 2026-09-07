@@ -5,8 +5,9 @@ import (
 	"context"
 	"os"
 
-	"github.com/mizuchilabs/tetherd/internal/util"
 	"github.com/urfave/cli/v3"
+
+	"github.com/mizuchilabs/tetherd/internal/util"
 )
 
 type Config struct {
@@ -17,11 +18,10 @@ type Config struct {
 	HostIP      string
 	Insecure    bool
 	Debug       bool
-	Version     string
 	Updates     chan []byte
 }
 
-// New loads configuration from environment variables
+// New loads configuration from environment variables.
 func New(ctx context.Context, cmd *cli.Command) (*Config, error) {
 	cfg := Config{}
 
@@ -31,9 +31,8 @@ func New(ctx context.Context, cmd *cli.Command) (*Config, error) {
 	}
 	cfg.HostIP = cmd.String("host-ip")
 	if cfg.HostIP == "" {
-		cfg.HostIP = util.GetOutboundIP()
+		cfg.HostIP = util.GetOutboundIP(ctx)
 	}
-	cfg.Version = cmd.Root().Version
 	cfg.Debug = cmd.Bool("debug")
 	cfg.Insecure = cmd.Bool("insecure")
 	cfg.Server = cmd.String("server")

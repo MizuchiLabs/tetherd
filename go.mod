@@ -4,6 +4,7 @@ go 1.26.6
 
 require (
 	github.com/coder/websocket v1.8.15
+	github.com/mizuchilabs/kata v0.1.3
 	github.com/moby/moby/api v1.56.0
 	github.com/moby/moby/client v0.6.0
 	github.com/traefik/paerser v0.2.3
