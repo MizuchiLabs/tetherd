@@ -15,12 +15,6 @@ import (
 	"github.com/mizuchilabs/tetherd/internal/config"
 )
 
-var (
-	Version = "dev"
-	Commit  = "none"
-	Date    = "unknown"
-)
-
 func main() {
 	cmd := &cli.Command{
 		EnableShellCompletion: true,
@@ -45,7 +39,7 @@ func main() {
 				return fmt.Errorf("failed to initialize docker watcher: %w", err)
 			}
 
-			slog.Info("Starting tetherd", "version", Version)
+			slog.Info("Starting tetherd", "version", buildinfo.Version)
 			go cli.Connect(ctx)
 			go watcher.Start(ctx)
 			<-ctx.Done()
