@@ -9,6 +9,7 @@ tasks:
     desc: Update dependencies
     cmds:
       - go get -u ./...
+      - go run ./tools/depalign
 
   build:
     desc: Build binary
