@@ -6,7 +6,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/mizuchilabs/kata v0.1.3
 	github.com/moby/moby/api v1.56.0
-	github.com/moby/moby/client v0.4.0
+	github.com/moby/moby/client v0.4.1
 	github.com/traefik/paerser v0.2.3
 	github.com/traefik/traefik/v3 v3.7.13
 	github.com/urfave/cli/v3 v3.11.0
@@ -22,7 +22,7 @@ require (
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/distribution/reference v0.6.0 // indirect
-	github.com/docker/go-connections v0.6.0 // indirect
+	github.com/docker/go-connections v0.7.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
