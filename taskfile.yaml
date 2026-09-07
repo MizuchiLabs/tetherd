@@ -1,7 +1,6 @@
 version: "3"
 
 env:
-  CGO_ENABLED: 0
   IMAGE: ghcr.io/mizuchilabs/tetherd
 
 tasks:
