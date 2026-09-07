@@ -5,14 +5,16 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"log/slog"
-	"math/rand"
+	"math/rand/v2"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+
 	"github.com/mizuchilabs/tetherd/internal/config"
 )
 
@@ -31,7 +33,7 @@ func NewClient(cfg *config.Config) *Client {
 	return &Client{cfg: cfg}
 }
 
-// Connect starts the persistent connection and reconnect loop
+// Connect starts the persistent connection and reconnect loop.
 func (c *Client) Connect(ctx context.Context) {
 	url := strings.Replace(c.cfg.Server, "http", "ws", 1)
 	url = strings.TrimRight(url, "/") + "/api/ws"
@@ -44,7 +46,7 @@ func (c *Client) Connect(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(time.Duration(3+rand.Intn(4)) * time.Second): // #nosec - G404
+		case <-time.After(time.Duration(3+rand.IntN(4)) * time.Second): // #nosec - G404
 			// retry with some jitter
 		}
 	}
@@ -54,7 +56,11 @@ func (c *Client) handler(ctx context.Context, url string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return fmt.Errorf("unexpected default transport type %T", http.DefaultTransport)
+	}
+	transport := base.Clone()
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: c.cfg.Insecure} // #nosec - G402
 	dialOptions := &websocket.DialOptions{
 		HTTPClient: &http.Client{Transport: transport},
@@ -68,6 +74,7 @@ func (c *Client) handler(ctx context.Context, url string) error {
 	dialCtx, dialCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer dialCancel()
 
+	//nolint:bodyclose // coder/websocket manages the handshake response body itself, docs say never to close it
 	conn, _, err := websocket.Dial(dialCtx, url, dialOptions)
 	if err != nil {
 		return err

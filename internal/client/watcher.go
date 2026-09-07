@@ -5,9 +5,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/mizuchilabs/tetherd/internal/config"
 	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/client"
+
+	"github.com/mizuchilabs/tetherd/internal/config"
 )
 
 type Watcher struct {
