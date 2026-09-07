@@ -6,7 +6,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/mizuchilabs/kata v0.1.3
 	github.com/moby/moby/api v1.56.0
-	github.com/moby/moby/client v0.4.1
+	github.com/moby/moby/client v0.6.0
 	github.com/traefik/paerser v0.2.3
 	github.com/traefik/traefik/v3 v3.7.13
 	github.com/urfave/cli/v3 v3.11.0
