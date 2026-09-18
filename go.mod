@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/coder/websocket v1.8.15
-	github.com/mizuchilabs/kata v0.1.3
+	github.com/mizuchilabs/kata v0.1.5
 	github.com/moby/moby/api v1.56.0
 	github.com/moby/moby/client v0.4.1
 	github.com/traefik/paerser v0.2.3
@@ -90,8 +90,8 @@ require (
 	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/term v0.45.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260715232425-e75dac1f907d // indirect
