@@ -4,6 +4,11 @@ env:
   IMAGE: ghcr.io/mizuchilabs/tetherd
 
 tasks:
+  dev:
+    desc: Run development server
+    cmds:
+      - go run . --token 123
+
   update:
     desc: Update dependencies
     cmds:
