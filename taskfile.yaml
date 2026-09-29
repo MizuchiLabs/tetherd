@@ -12,8 +12,10 @@ tasks:
   update:
     desc: Update dependencies
     cmds:
-      - go get -u ./...
-      - go run ./tools/depalign
+      # Direct deps only. `go get -u` raises indirect deps past what traefik builds with,
+      # this way they only move as far as traefik or another direct dep asks for.
+      - go get $(go mod edit -json | jq -r '.Require[] | select(.Indirect | not) | .Path + "@latest"')
+      - go mod tidy
 
   build:
     desc: Build binary
