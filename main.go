@@ -6,11 +6,12 @@ import (
 	"log/slog"
 	"os"
 
+	dockerclient "github.com/moby/moby/client"
+	"github.com/urfave/cli/v3"
+
 	"github.com/mizuchilabs/kata/buildinfo"
 	"github.com/mizuchilabs/kata/logx"
 	"github.com/mizuchilabs/kata/sigx"
-	dockerclient "github.com/moby/moby/client"
-	"github.com/urfave/cli/v3"
 
 	"github.com/mizuchilabs/tetherd/internal/client"
 	"github.com/mizuchilabs/tetherd/internal/config"
