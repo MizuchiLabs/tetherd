@@ -20,10 +20,9 @@ jobs:
     with:
       vulncheck: false
 
-  # Skips itself for repos without kos in .goreleaser.yaml.
+  # Runs on main only and skips itself for repos without kos in .goreleaser.yaml.
   nightly:
     needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
