@@ -1,44 +1,59 @@
-// Package config contains the application configuration
+// Package config contains the application configuration.
 package config
 
 import (
+	"cmp"
 	"context"
+	"errors"
+	"fmt"
+	"net"
 	"os"
 
 	"github.com/urfave/cli/v3"
-
-	"github.com/mizuchilabs/tetherd/internal/util"
 )
 
 type Config struct {
-	Hostname    string
+	Name        string
 	Server      string
 	Token       string
 	Environment string
 	HostIP      string
 	Insecure    bool
-	Debug       bool
-	Updates     chan []byte
 }
 
-// New loads configuration from environment variables.
+// New reads the CLI flags and detects the host IP if it was not set.
 func New(ctx context.Context, cmd *cli.Command) (*Config, error) {
-	cfg := Config{}
-
-	cfg.Hostname, _ = os.Hostname()
-	if cfg.Hostname == "" {
-		cfg.Hostname = "unknown"
+	hostname, _ := os.Hostname()
+	cfg := Config{
+		Name:        cmp.Or(cmd.String("name"), hostname, "unknown"),
+		Server:      cmd.String("server"),
+		Token:       cmd.String("token"),
+		Environment: cmd.String("environment"),
+		HostIP:      cmd.String("host-ip"),
+		Insecure:    cmd.Bool("insecure"),
 	}
-	cfg.HostIP = cmd.String("host-ip")
 	if cfg.HostIP == "" {
-		cfg.HostIP = util.GetOutboundIP(ctx)
+		ip, err := outboundIP(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("detecting host IP, set --host-ip: %w", err)
+		}
+		cfg.HostIP = ip
 	}
-	cfg.Debug = cmd.Bool("debug")
-	cfg.Insecure = cmd.Bool("insecure")
-	cfg.Server = cmd.String("server")
-	cfg.Environment = cmd.String("env")
-	cfg.Token = cmd.String("token")
-	cfg.Updates = make(chan []byte, 1)
-
 	return &cfg, nil
+}
+
+// outboundIP returns the local address used to reach the internet. UDP dial sends no packets.
+func outboundIP(ctx context.Context) (string, error) {
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "udp", "8.8.8.8:80")
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = conn.Close() }()
+
+	addr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return "", errors.New("unexpected local address type")
+	}
+	return addr.IP.String(), nil
 }

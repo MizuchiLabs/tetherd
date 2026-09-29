@@ -1,4 +1,4 @@
-// Package client contains the client implementation
+// Package client watches docker and pushes the resulting traefik config to tether.
 package client
 
 import (
@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
-	"strings"
+	"net/url"
 	"time"
 
 	"github.com/coder/websocket"
@@ -18,109 +18,107 @@ import (
 	"github.com/mizuchilabs/tetherd/internal/config"
 )
 
-type UpdateRequest struct {
+const pingInterval = 15 * time.Second
+
+type updateRequest struct {
 	Env    string          `json:"env"`
 	Name   string          `json:"name"`
 	Config json.RawMessage `json:"config"`
 }
 
-type Client struct {
-	cfg          *config.Config
-	latestUpdate []byte
-}
+// Connect keeps a connection to tether open until ctx is done, pushing every config from updates.
+func Connect(ctx context.Context, cfg *config.Config, updates <-chan []byte) error {
+	u, err := url.Parse(cfg.Server)
+	if err != nil {
+		return fmt.Errorf("parsing server url: %w", err)
+	}
+	switch u.Scheme {
+	case "https", "wss":
+		u.Scheme = "wss"
+	default:
+		u.Scheme = "ws"
+	}
+	u = u.JoinPath("api", "ws")
 
-func NewClient(cfg *config.Config) *Client {
-	return &Client{cfg: cfg}
-}
+	opts := &websocket.DialOptions{HTTPClient: &http.Client{Transport: &http.Transport{
+		Proxy:           http.ProxyFromEnvironment,
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.Insecure}, // #nosec G402 -- opt-in flag
+	}}}
+	if cfg.Token != "" {
+		opts.HTTPHeader = http.Header{"Authorization": {"Bearer " + cfg.Token}}
+	}
 
-// Connect starts the persistent connection and reconnect loop.
-func (c *Client) Connect(ctx context.Context) {
-	url := strings.Replace(c.cfg.Server, "http", "ws", 1)
-	url = strings.TrimRight(url, "/") + "/api/ws"
-
+	var latest []byte
 	for {
-		if err := c.handler(ctx, url); err != nil {
+		if err := session(ctx, cfg, u.String(), opts, updates, &latest); err != nil && ctx.Err() == nil {
 			slog.Error("Connection lost, retrying...", "error", err)
 		}
 
 		select {
 		case <-ctx.Done():
-			return
-		case <-time.After(time.Duration(3+rand.IntN(4)) * time.Second): // #nosec - G404
-			// retry with some jitter
+			return nil
+		case <-time.After(time.Duration(3+rand.IntN(4)) * time.Second): // #nosec G404 -- retry jitter
 		}
 	}
 }
 
-func (c *Client) handler(ctx context.Context, url string) error {
+// session runs one connection. It resends the latest config first so tether is current after a reconnect.
+func session(
+	ctx context.Context,
+	cfg *config.Config,
+	wsURL string,
+	opts *websocket.DialOptions,
+	updates <-chan []byte,
+	latest *[]byte,
+) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	base, ok := http.DefaultTransport.(*http.Transport)
-	if !ok {
-		return fmt.Errorf("unexpected default transport type %T", http.DefaultTransport)
-	}
-	transport := base.Clone()
-	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: c.cfg.Insecure} // #nosec - G402
-	dialOptions := &websocket.DialOptions{
-		HTTPClient: &http.Client{Transport: transport},
-	}
-
-	if c.cfg.Token != "" {
-		dialOptions.HTTPHeader = http.Header{}
-		dialOptions.HTTPHeader.Set("Authorization", "Bearer "+c.cfg.Token)
-	}
-
 	dialCtx, dialCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer dialCancel()
-
 	//nolint:bodyclose // coder/websocket manages the handshake response body itself, docs say never to close it
-	conn, _, err := websocket.Dial(dialCtx, url, dialOptions)
+	conn, _, err := websocket.Dial(dialCtx, wsURL, opts)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.CloseNow() }()
+	slog.Info("Connected to tether", "server", cfg.Server, "name", cfg.Name, "env", cfg.Environment)
 
-	// read loop to detect disconnects
+	// Reading is needed for pings and close frames, tether never sends data.
 	go func() {
 		defer cancel()
-		conn.SetReadLimit(32768) // prevent memory exhaustion
 		for {
-			_, _, err := conn.Read(ctx)
-			if err != nil {
+			if _, _, err := conn.Read(ctx); err != nil {
 				return
 			}
 		}
 	}()
 
-	select {
-	case latest := <-c.cfg.Updates:
-		c.latestUpdate = latest
-	default:
+	send := func(data []byte) error {
+		*latest = data
+		return wsjson.Write(ctx, conn, updateRequest{Name: cfg.Name, Env: cfg.Environment, Config: data})
 	}
-
-	// push the last known state on reconnect
-	if c.latestUpdate != nil {
-		if err := wsjson.Write(ctx, conn, UpdateRequest{
-			Name:   c.cfg.Hostname,
-			Env:    c.cfg.Environment,
-			Config: json.RawMessage(c.latestUpdate),
-		}); err != nil {
-			return err // back to retry loop
+	if *latest != nil {
+		if err := send(*latest); err != nil {
+			return err
 		}
 	}
 
+	ping := time.NewTicker(pingInterval)
+	defer ping.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return conn.Close(websocket.StatusNormalClosure, "agent shutting down")
-		case newConfig := <-c.cfg.Updates:
-			c.latestUpdate = newConfig
-			if err = wsjson.Write(ctx, conn, UpdateRequest{
-				Name:   c.cfg.Hostname,
-				Env:    c.cfg.Environment,
-				Config: json.RawMessage(c.latestUpdate),
-			}); err != nil {
+		case <-ping.C:
+			pingCtx, pingCancel := context.WithTimeout(ctx, pingInterval)
+			err := conn.Ping(pingCtx)
+			pingCancel()
+			if err != nil {
+				return fmt.Errorf("ping: %w", err)
+			}
+		case data := <-updates:
+			if err := send(data); err != nil {
 				return err
 			}
 		}

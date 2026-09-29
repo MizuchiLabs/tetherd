@@ -61,6 +61,15 @@ Tetherd will tell the central server: _"Send traffic for `my-app.com` to `http:/
 | `TETHERD_TOKEN`       | `--token`    |                         | **Required**: Token matching the Tether server. |
 | `TETHERD_HOST_IP`     | `--host-ip`  | _(auto)_                | Manual override for this server's IP.           |
 | `TETHERD_ENVIRONMENT` | `--env`      | `default`               | Group servers into isolated environments.       |
+| `TETHERD_NAME`        | `--name`     | _(hostname)_            | Unique agent name shown in Tether.              |
+| `TETHERD_INSECURE`    | `--insecure` | `false`                 | Skip TLS verification when connecting to Tether. |
+
+## Notes
+
+- Containers with a healthcheck only get routes once they are `healthy`, same as Traefik's Docker provider.
+- References to other providers like `api@internal` or `auth@file` are passed through untouched.
+- `name@docker` middleware references are rewritten to `name` when the middleware is defined by labels on this host, because Tether serves it through Traefik's HTTP provider. Middlewares that only exist in the gateway's own Docker provider keep the `@docker` suffix.
+- Any middleware defined in Tether's local file or by another agent in the same environment can be used by its plain name, e.g. `traefik.http.routers.my-app.middlewares=auth`.
 | `TETHERD_DEBUG`       | `--debug`    | `false`                 | Enable detailed logging.                        |
 
 ---

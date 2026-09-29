@@ -16,179 +16,241 @@ import (
 	"github.com/traefik/traefik/v3/pkg/tls"
 )
 
+// target is where one container's published ports are reachable from the gateway.
+type target struct {
+	hostIP      string
+	defaultPort string
+	portMap     map[string]string // private -> public
+	hostMode    bool
+	labels      map[string]string
+}
+
 // BuildTraefikConfig parses labels into a Traefik dynamic config and returns it as JSON.
 func BuildTraefikConfig(containers []container.Summary, hostIP string) ([]byte, error) {
-	rootConfig := &dynamic.Configuration{}
+	root := &dynamic.Configuration{}
 	for _, c := range containers {
-		if c.Labels["traefik.enable"] != "true" {
+		if c.Labels["traefik.enable"] != "true" || len(c.Names) == 0 {
 			continue
 		}
 
-		containerName := c.Names[0][1:]
-		slog.Debug("Processing container", "name", containerName)
+		name := strings.TrimPrefix(c.Names[0], "/")
+		// Same as traefik's docker provider: no routes until the container is healthy.
+		if c.Health != nil && (c.Health.Status == container.Starting || c.Health.Status == container.Unhealthy) {
+			slog.Debug("Skipping container, not healthy", "name", name, "health", c.Health.Status)
+			continue
+		}
+		slog.Debug("Processing container", "name", name)
 
 		dyn := &dynamic.Configuration{}
-		if err := parser.Decode(
-			c.Labels,
-			dyn,
-			parser.DefaultRootName,
-			"traefik.http",
-			"traefik.tcp",
-			"traefik.udp",
-			"traefik.tls",
-		); err != nil {
-			slog.Error("Failed to parse traefik labels", "container", containerName, "error", err)
+		err := parser.Decode(c.Labels, dyn, parser.DefaultRootName, "traefik.http", "traefik.tcp", "traefik.udp",
+			"traefik.tls")
+		if err != nil {
+			slog.Error("Failed to parse traefik labels", "container", name, "error", err)
 			continue
 		}
 
 		defaultPort, portMap := extractContainerPorts(c)
-		isHostMode := c.HostConfig.NetworkMode == "host"
-
-		// We no longer skip containers with zero exposed ports here.
-		// If they use Swarm Ingress or MacVLAN, portMap is empty but they might provide an explicit port label.
-		// We'll let the server processing logic handle the rejection if no valid port is found.
-
-		// Process HTTP
-		//nolint:dupl // TCP/UDP merge blocks are structurally identical by design of Traefik's per-protocol config types
-		if dyn.HTTP != nil {
-			if rootConfig.HTTP == nil {
-				rootConfig.HTTP = &dynamic.HTTPConfiguration{
-					Routers:     make(map[string]*dynamic.Router),
-					Services:    make(map[string]*dynamic.Service),
-					Middlewares: make(map[string]*dynamic.Middleware),
-				}
-			}
-
-			for name, r := range dyn.HTTP.Routers {
-				if r.Service == "" {
-					r.Service = name
-				}
-				rootConfig.HTTP.Routers[name] = r
-				ensureHTTPService(dyn, r.Service)
-			}
-			for name, svc := range dyn.HTTP.Services {
-				if svc.LoadBalancer != nil {
-					explicitPort := extractServicePort(c.Labels, "http", name)
-					processHTTPServers(svc.LoadBalancer, hostIP, defaultPort, portMap, isHostMode, explicitPort)
-				}
-				if svc.LoadBalancer == nil || len(svc.LoadBalancer.Servers) == 0 {
-					continue // Skip invalid services
-				}
-				rootConfig.HTTP.Services[name] = svc
-			}
-			for name, r := range rootConfig.HTTP.Routers {
-				if _, ok := rootConfig.HTTP.Services[r.Service]; !ok {
-					delete(rootConfig.HTTP.Routers, name) // Cascade cleanup
-				}
-			}
-			maps.Copy(rootConfig.HTTP.Middlewares, dyn.HTTP.Middlewares)
+		t := target{
+			hostIP:      hostIP,
+			defaultPort: defaultPort,
+			portMap:     portMap,
+			hostMode:    c.HostConfig.NetworkMode == "host",
+			labels:      c.Labels,
 		}
-
-		// Process TCP
-		//nolint:dupl // see comment on the HTTP merge block above
-		if dyn.TCP != nil {
-			if rootConfig.TCP == nil {
-				rootConfig.TCP = &dynamic.TCPConfiguration{
-					Routers:     make(map[string]*dynamic.TCPRouter),
-					Services:    make(map[string]*dynamic.TCPService),
-					Middlewares: make(map[string]*dynamic.TCPMiddleware),
-				}
-			}
-
-			for name, r := range dyn.TCP.Routers {
-				if r.Service == "" {
-					r.Service = name
-				}
-				rootConfig.TCP.Routers[name] = r
-				ensureTCPService(dyn, r.Service)
-			}
-			for name, svc := range dyn.TCP.Services {
-				if svc.LoadBalancer != nil {
-					explicitPort := extractServicePort(c.Labels, "tcp", name)
-					processTCPServers(svc.LoadBalancer, hostIP, defaultPort, portMap, isHostMode, explicitPort)
-				}
-				if svc.LoadBalancer == nil || len(svc.LoadBalancer.Servers) == 0 {
-					continue // Skip invalid services
-				}
-				rootConfig.TCP.Services[name] = svc
-			}
-			for name, r := range rootConfig.TCP.Routers {
-				if _, ok := rootConfig.TCP.Services[r.Service]; !ok {
-					delete(rootConfig.TCP.Routers, name) // Cascade cleanup
-				}
-			}
-			maps.Copy(rootConfig.TCP.Middlewares, dyn.TCP.Middlewares)
-		}
-
-		// Process UDP
-		if dyn.UDP != nil {
-			if rootConfig.UDP == nil {
-				rootConfig.UDP = &dynamic.UDPConfiguration{
-					Routers:  make(map[string]*dynamic.UDPRouter),
-					Services: make(map[string]*dynamic.UDPService),
-				}
-			}
-
-			for name, r := range dyn.UDP.Routers {
-				if r.Service == "" {
-					r.Service = name
-				}
-				rootConfig.UDP.Routers[name] = r
-				ensureUDPService(dyn, r.Service)
-			}
-			for name, svc := range dyn.UDP.Services {
-				if svc.LoadBalancer != nil {
-					explicitPort := extractServicePort(c.Labels, "udp", name)
-					processUDPServers(svc.LoadBalancer, hostIP, defaultPort, portMap, isHostMode, explicitPort)
-				}
-				if svc.LoadBalancer == nil || len(svc.LoadBalancer.Servers) == 0 {
-					continue // Skip invalid services
-				}
-				rootConfig.UDP.Services[name] = svc
-			}
-			for name, r := range rootConfig.UDP.Routers {
-				if _, ok := rootConfig.UDP.Services[r.Service]; !ok {
-					delete(rootConfig.UDP.Routers, name) // Cascade cleanup
-				}
-			}
-		}
-
-		// Process TLS
-		if dyn.TLS != nil {
-			if rootConfig.TLS == nil {
-				rootConfig.TLS = &dynamic.TLSConfiguration{
-					Options: make(map[string]tls.Options),
-					Stores:  make(map[string]tls.Store),
-				}
-			}
-			if len(dyn.TLS.Certificates) > 0 {
-				rootConfig.TLS.Certificates = append(
-					rootConfig.TLS.Certificates,
-					dyn.TLS.Certificates...,
-				)
-			}
-			if dyn.TLS.Options != nil {
-				maps.Copy(rootConfig.TLS.Options, dyn.TLS.Options)
-			}
-			if dyn.TLS.Stores != nil {
-				maps.Copy(rootConfig.TLS.Stores, dyn.TLS.Stores)
-			}
-		}
+		addHTTP(root, dyn.HTTP, t)
+		addTCP(root, dyn.TCP, t)
+		addUDP(root, dyn.UDP, t)
+		addTLS(root, dyn.TLS)
 	}
 
-	return json.Marshal(rootConfig)
+	localizeDockerRefs(root)
+	return json.Marshal(root)
 }
 
-// Helpers
-
-func extractServicePort(labels map[string]string, protocol, serviceName string) string {
-	key := fmt.Sprintf("traefik.%s.services.%s.loadbalancer.server.port", protocol, serviceName)
-	for k, v := range labels {
-		if strings.EqualFold(k, key) {
-			return v
+func addHTTP(root *dynamic.Configuration, src *dynamic.HTTPConfiguration, t target) {
+	if src == nil {
+		return
+	}
+	if root.HTTP == nil {
+		root.HTTP = &dynamic.HTTPConfiguration{
+			Routers:     make(map[string]*dynamic.Router),
+			Services:    make(map[string]*dynamic.Service),
+			Middlewares: make(map[string]*dynamic.Middleware),
 		}
 	}
-	return ""
+	dst := root.HTTP
+
+	for name, r := range src.Routers {
+		r.Service = serviceRef(r.Service, name)
+		dst.Routers[name] = r
+		if !isProviderRef(r.Service) {
+			if src.Services == nil {
+				src.Services = make(map[string]*dynamic.Service)
+			}
+			if _, ok := src.Services[r.Service]; !ok {
+				src.Services[r.Service] = &dynamic.Service{
+					LoadBalancer: &dynamic.ServersLoadBalancer{PassHostHeader: new(true)},
+				}
+			}
+		}
+	}
+	for name, svc := range src.Services {
+		if svc.LoadBalancer == nil {
+			continue
+		}
+		processHTTPServers(svc.LoadBalancer, t, t.servicePort("http", name))
+		if len(svc.LoadBalancer.Servers) > 0 {
+			dst.Services[name] = svc
+		}
+	}
+	for name, r := range dst.Routers {
+		if _, ok := dst.Services[r.Service]; !ok && !isProviderRef(r.Service) {
+			delete(dst.Routers, name)
+		}
+	}
+	maps.Copy(dst.Middlewares, src.Middlewares)
+}
+
+func addTCP(root *dynamic.Configuration, src *dynamic.TCPConfiguration, t target) {
+	if src == nil {
+		return
+	}
+	if root.TCP == nil {
+		root.TCP = &dynamic.TCPConfiguration{
+			Routers:     make(map[string]*dynamic.TCPRouter),
+			Services:    make(map[string]*dynamic.TCPService),
+			Middlewares: make(map[string]*dynamic.TCPMiddleware),
+		}
+	}
+	dst := root.TCP
+
+	for name, r := range src.Routers {
+		r.Service = serviceRef(r.Service, name)
+		dst.Routers[name] = r
+		if !isProviderRef(r.Service) {
+			if src.Services == nil {
+				src.Services = make(map[string]*dynamic.TCPService)
+			}
+			if _, ok := src.Services[r.Service]; !ok {
+				src.Services[r.Service] = &dynamic.TCPService{LoadBalancer: &dynamic.TCPServersLoadBalancer{}}
+			}
+		}
+	}
+	for name, svc := range src.Services {
+		if svc.LoadBalancer == nil {
+			continue
+		}
+		processTCPServers(svc.LoadBalancer, t, t.servicePort("tcp", name))
+		if len(svc.LoadBalancer.Servers) > 0 {
+			dst.Services[name] = svc
+		}
+	}
+	for name, r := range dst.Routers {
+		if _, ok := dst.Services[r.Service]; !ok && !isProviderRef(r.Service) {
+			delete(dst.Routers, name)
+		}
+	}
+	maps.Copy(dst.Middlewares, src.Middlewares)
+}
+
+func addUDP(root *dynamic.Configuration, src *dynamic.UDPConfiguration, t target) {
+	if src == nil {
+		return
+	}
+	if root.UDP == nil {
+		root.UDP = &dynamic.UDPConfiguration{
+			Routers:  make(map[string]*dynamic.UDPRouter),
+			Services: make(map[string]*dynamic.UDPService),
+		}
+	}
+	dst := root.UDP
+
+	for name, r := range src.Routers {
+		r.Service = serviceRef(r.Service, name)
+		dst.Routers[name] = r
+		if !isProviderRef(r.Service) {
+			if src.Services == nil {
+				src.Services = make(map[string]*dynamic.UDPService)
+			}
+			if _, ok := src.Services[r.Service]; !ok {
+				src.Services[r.Service] = &dynamic.UDPService{LoadBalancer: &dynamic.UDPServersLoadBalancer{}}
+			}
+		}
+	}
+	for name, svc := range src.Services {
+		if svc.LoadBalancer == nil {
+			continue
+		}
+		processUDPServers(svc.LoadBalancer, t, t.servicePort("udp", name))
+		if len(svc.LoadBalancer.Servers) > 0 {
+			dst.Services[name] = svc
+		}
+	}
+	for name, r := range dst.Routers {
+		if _, ok := dst.Services[r.Service]; !ok && !isProviderRef(r.Service) {
+			delete(dst.Routers, name)
+		}
+	}
+}
+
+func addTLS(root *dynamic.Configuration, src *dynamic.TLSConfiguration) {
+	if src == nil {
+		return
+	}
+	if root.TLS == nil {
+		root.TLS = &dynamic.TLSConfiguration{
+			Options: make(map[string]tls.Options),
+			Stores:  make(map[string]tls.Store),
+		}
+	}
+	root.TLS.Certificates = append(root.TLS.Certificates, src.Certificates...)
+	maps.Copy(root.TLS.Options, src.Options)
+	maps.Copy(root.TLS.Stores, src.Stores)
+}
+
+// serviceRef defaults to the router name and drops an @docker suffix, since services
+// defined by this host's labels are served through tether's http provider.
+func serviceRef(service, router string) string {
+	if service == "" {
+		return router
+	}
+	return strings.TrimSuffix(service, "@docker")
+}
+
+// isProviderRef reports whether the name points at another provider, e.g. api@internal or auth@file.
+func isProviderRef(name string) bool {
+	return strings.Contains(name, "@")
+}
+
+// localizeDockerRefs rewrites name@docker middleware references to a plain name when this host
+// defines that middleware, since tether serves it as name@http. Unknown ones are left alone,
+// they may live in the gateway's own docker provider.
+func localizeDockerRefs(cfg *dynamic.Configuration) {
+	if cfg.HTTP != nil {
+		for _, r := range cfg.HTTP.Routers {
+			localizeRefs(r.Middlewares, cfg.HTTP.Middlewares)
+		}
+		for _, m := range cfg.HTTP.Middlewares {
+			if m.Chain != nil {
+				localizeRefs(m.Chain.Middlewares, cfg.HTTP.Middlewares)
+			}
+		}
+	}
+	if cfg.TCP != nil {
+		for _, r := range cfg.TCP.Routers {
+			localizeRefs(r.Middlewares, cfg.TCP.Middlewares)
+		}
+	}
+}
+
+func localizeRefs[V any](refs []string, defined map[string]V) {
+	for i, ref := range refs {
+		if name, ok := strings.CutSuffix(ref, "@docker"); ok {
+			if _, exists := defined[name]; exists {
+				refs[i] = name
+			}
+		}
+	}
 }
 
 func extractContainerPorts(c container.Summary) (string, map[string]string) {
@@ -213,51 +275,41 @@ func extractContainerPorts(c container.Summary) (string, map[string]string) {
 	return defaultPort, portMap
 }
 
-// resolveMappedPort decides which port to use for a server given the container's
+// servicePort returns the port label for a service, matched case insensitively like traefik does.
+func (t target) servicePort(protocol, service string) string {
+	key := fmt.Sprintf("traefik.%s.services.%s.loadbalancer.server.port", protocol, service)
+	for k, v := range t.labels {
+		if strings.EqualFold(k, key) {
+			return v
+		}
+	}
+	return ""
+}
+
+// resolvePort decides which port to use for a server given the container's
 // published ports. Falls back to the declared port when it is already public,
 // when the container runs in host mode, or when there is nothing to fall back to.
-func resolveMappedPort(srvPort, defaultPort string, portMap map[string]string, isHostMode bool) string {
-	if mapped := portMap[srvPort]; mapped != "" {
+func (t target) resolvePort(port string) string {
+	if mapped := t.portMap[port]; mapped != "" {
 		return mapped
 	}
-	for _, pub := range portMap {
-		if pub == srvPort {
-			return srvPort
+	for _, pub := range t.portMap {
+		if pub == port {
+			return port
 		}
 	}
-	if srvPort != "" && (isHostMode || defaultPort == "") {
-		return srvPort
+	if port != "" && (t.hostMode || t.defaultPort == "") {
+		return port
 	}
-	return defaultPort
+	return t.defaultPort
 }
 
-// HTTP Helpers
-
-func ensureHTTPService(config *dynamic.Configuration, svcName string) {
-	if config.HTTP.Services == nil {
-		config.HTTP.Services = make(map[string]*dynamic.Service)
-	}
-	if _, ok := config.HTTP.Services[svcName]; !ok {
-		config.HTTP.Services[svcName] = &dynamic.Service{
-			LoadBalancer: &dynamic.ServersLoadBalancer{
-				PassHostHeader: new(true), // default to true
-			},
-		}
-	}
-}
-
-func processHTTPServers(
-	lb *dynamic.ServersLoadBalancer,
-	hostIP, defaultPort string,
-	portMap map[string]string,
-	isHostMode bool,
-	explicitPort string,
-) {
+func processHTTPServers(lb *dynamic.ServersLoadBalancer, t target, explicitPort string) {
 	switch {
 	case len(lb.Servers) == 0 && explicitPort != "":
 		lb.Servers = []dynamic.Server{{Port: explicitPort}}
-	case len(lb.Servers) == 0 && defaultPort != "":
-		lb.Servers = []dynamic.Server{{URL: "http://" + net.JoinHostPort(hostIP, defaultPort)}}
+	case len(lb.Servers) == 0 && t.defaultPort != "":
+		lb.Servers = []dynamic.Server{{URL: "http://" + net.JoinHostPort(t.hostIP, t.defaultPort)}}
 		return
 	case len(lb.Servers) == 0:
 		return
@@ -265,11 +317,11 @@ func processHTTPServers(
 		lb.Servers[0].Port = explicitPort
 	}
 
-	validServers := make([]dynamic.Server, 0, len(lb.Servers))
+	valid := make([]dynamic.Server, 0, len(lb.Servers))
 	for _, srv := range lb.Servers {
-		mapped := resolveMappedPort(srv.Port, defaultPort, portMap, isHostMode)
+		mapped := t.resolvePort(srv.Port)
 		if mapped == "" {
-			continue // Skip invalid servers
+			continue
 		}
 
 		scheme := srv.Scheme
@@ -283,114 +335,64 @@ func processHTTPServers(
 				scheme = "http"
 			}
 		}
-
-		// Bake everything into the final URL
-		srv.URL = scheme + "://" + net.JoinHostPort(hostIP, mapped)
-
-		// Clean up fields
+		srv.URL = scheme + "://" + net.JoinHostPort(t.hostIP, mapped)
 		srv.Port = ""
 		srv.Scheme = ""
-
-		validServers = append(validServers, srv)
+		valid = append(valid, srv)
 	}
-
-	lb.Servers = validServers
+	lb.Servers = valid
 }
 
-// TCP Helpers
-
-func ensureTCPService(config *dynamic.Configuration, svcName string) {
-	if config.TCP.Services == nil {
-		config.TCP.Services = make(map[string]*dynamic.TCPService)
-	}
-	if _, ok := config.TCP.Services[svcName]; !ok {
-		config.TCP.Services[svcName] = &dynamic.TCPService{
-			LoadBalancer: &dynamic.TCPServersLoadBalancer{},
-		}
-	}
-}
-
-//nolint:dupl // processUDPServers below is structurally identical, Traefik has no shared TCP/UDP server type
-func processTCPServers(
-	lb *dynamic.TCPServersLoadBalancer,
-	hostIP, defaultPort string,
-	portMap map[string]string,
-	isHostMode bool,
-	explicitPort string,
-) {
+//nolint:dupl // processUDPServers is structurally identical, traefik has no shared TCP/UDP server type
+func processTCPServers(lb *dynamic.TCPServersLoadBalancer, t target, explicitPort string) {
 	switch {
 	case len(lb.Servers) == 0 && explicitPort != "":
 		lb.Servers = []dynamic.TCPServer{{Port: explicitPort}}
-	case len(lb.Servers) == 0 && defaultPort != "":
-		lb.Servers = []dynamic.TCPServer{{Address: net.JoinHostPort(hostIP, defaultPort)}}
+	case len(lb.Servers) == 0 && t.defaultPort != "":
+		lb.Servers = []dynamic.TCPServer{{Address: net.JoinHostPort(t.hostIP, t.defaultPort)}}
 		return
 	case len(lb.Servers) == 0:
-		lb.Servers = nil
 		return
 	case explicitPort != "":
 		lb.Servers[0].Port = explicitPort
 	}
 
-	validServers := make([]dynamic.TCPServer, 0, len(lb.Servers))
+	valid := make([]dynamic.TCPServer, 0, len(lb.Servers))
 	for _, srv := range lb.Servers {
-		mapped := resolveMappedPort(srv.Port, defaultPort, portMap, isHostMode)
+		mapped := t.resolvePort(srv.Port)
 		if mapped == "" {
 			continue
 		}
-		srv.Address = net.JoinHostPort(hostIP, mapped)
+		srv.Address = net.JoinHostPort(t.hostIP, mapped)
 		srv.Port = ""
-
-		validServers = append(validServers, srv)
+		valid = append(valid, srv)
 	}
-
-	lb.Servers = validServers
+	lb.Servers = valid
 }
 
-// UDP Helpers
-
-func ensureUDPService(config *dynamic.Configuration, svcName string) {
-	if config.UDP.Services == nil {
-		config.UDP.Services = make(map[string]*dynamic.UDPService)
-	}
-	if _, ok := config.UDP.Services[svcName]; !ok {
-		config.UDP.Services[svcName] = &dynamic.UDPService{
-			LoadBalancer: &dynamic.UDPServersLoadBalancer{},
-		}
-	}
-}
-
-//nolint:dupl // see comment on processTCPServers above
-func processUDPServers(
-	lb *dynamic.UDPServersLoadBalancer,
-	hostIP, defaultPort string,
-	portMap map[string]string,
-	isHostMode bool,
-	explicitPort string,
-) {
+//nolint:dupl // see processTCPServers
+func processUDPServers(lb *dynamic.UDPServersLoadBalancer, t target, explicitPort string) {
 	switch {
 	case len(lb.Servers) == 0 && explicitPort != "":
 		lb.Servers = []dynamic.UDPServer{{Port: explicitPort}}
-	case len(lb.Servers) == 0 && defaultPort != "":
-		lb.Servers = []dynamic.UDPServer{{Address: net.JoinHostPort(hostIP, defaultPort)}}
+	case len(lb.Servers) == 0 && t.defaultPort != "":
+		lb.Servers = []dynamic.UDPServer{{Address: net.JoinHostPort(t.hostIP, t.defaultPort)}}
 		return
 	case len(lb.Servers) == 0:
-		lb.Servers = nil
 		return
 	case explicitPort != "":
 		lb.Servers[0].Port = explicitPort
 	}
 
-	validServers := make([]dynamic.UDPServer, 0, len(lb.Servers))
+	valid := make([]dynamic.UDPServer, 0, len(lb.Servers))
 	for _, srv := range lb.Servers {
-		mapped := resolveMappedPort(srv.Port, defaultPort, portMap, isHostMode)
+		mapped := t.resolvePort(srv.Port)
 		if mapped == "" {
 			continue
 		}
-		srv.Address = net.JoinHostPort(hostIP, mapped)
+		srv.Address = net.JoinHostPort(t.hostIP, mapped)
 		srv.Port = ""
-
-		validServers = append(validServers, srv)
+		valid = append(valid, srv)
 	}
-
-	lb.Servers = validServers
+	lb.Servers = valid
 }

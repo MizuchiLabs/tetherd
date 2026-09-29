@@ -1,123 +1,91 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"time"
 
-	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/client"
-
-	"github.com/mizuchilabs/tetherd/internal/config"
 )
 
-type Watcher struct {
-	cli *client.Client
-	cfg *config.Config
-}
+const (
+	// debounce batches bursts of events, e.g. a compose up starting many containers.
+	debounce   = 250 * time.Millisecond
+	retryDelay = 3 * time.Second
+)
 
-func NewWatcher(cfg *config.Config) (*Watcher, error) {
-	cli, err := client.New(client.FromEnv)
-	if err != nil {
-		return nil, err
+// Watch pushes a fresh config to updates whenever containers change, until ctx is done.
+func Watch(ctx context.Context, docker *client.Client, hostIP string, updates chan []byte) {
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+
+	var last []byte
+	push := func() {
+		data, err := buildConfig(ctx, docker, hostIP)
+		if err != nil {
+			slog.Error("Failed to build traefik config, retrying...", "error", err)
+			timer.Reset(retryDelay)
+			return
+		}
+		if bytes.Equal(data, last) {
+			return
+		}
+		last = data
+		// Replace any unsent config so only the latest is queued.
+		select {
+		case <-updates:
+		default:
+		}
+		updates <- data
+		slog.Debug("Config updated")
 	}
 
-	return &Watcher{
-		cli: cli,
-		cfg: cfg,
-	}, nil
-}
+	filters := client.Filters{}
+	filters.Add("type", "container")
+	filters.Add("event", "start", "die", "health_status: healthy", "health_status: unhealthy")
 
-func (w *Watcher) Start(ctx context.Context) {
-	// Initial sync
-	w.syncContainers(ctx)
-
-	var stream <-chan events.Message
-	var errs <-chan error
-
-	startStream := func() {
-		filters := client.Filters{}
-		filters.Add("type", "container")
-		filters.Add("event", "start")
-		filters.Add("event", "die")
-		filters.Add("event", "health_status: healthy")
-		filters.Add("event", "health_status: unhealthy")
-
-		res := w.cli.Events(ctx, client.EventsListOptions{Filters: filters})
-		stream = res.Messages
-		errs = res.Err
-	}
-
-	startStream()
-
-	// Timer for debouncing rapid events (docker-compose)
-	var debounceTimer *time.Timer
 	for {
+		res := docker.Events(ctx, client.EventsListOptions{Filters: filters})
+		// Resync after every (re)subscribe so events missed while disconnected are caught.
+		timer.Reset(0)
+
+	stream:
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+				push()
+			case msg, ok := <-res.Messages:
+				if !ok {
+					break stream
+				}
+				slog.Debug("Docker event received", "action", msg.Action, "container", msg.Actor.ID)
+				timer.Reset(debounce)
+			case err := <-res.Err:
+				if ctx.Err() != nil {
+					return
+				}
+				slog.Error("Docker event stream failed, reconnecting...", "error", err)
+				break stream
+			}
+		}
+
 		select {
 		case <-ctx.Done():
 			return
-		case err, ok := <-errs:
-			if !ok || err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				if err != nil {
-					slog.Error("Docker event error", "error", err)
-				}
-				time.Sleep(3 * time.Second)
-				startStream()
-			}
-		case msg, ok := <-stream:
-			if !ok {
-				if ctx.Err() != nil {
-					return
-				}
-				slog.Warn("Docker event stream closed, reconnecting...")
-				time.Sleep(3 * time.Second)
-				startStream()
-				continue
-			}
-			slog.Debug("Docker event received", "action", msg.Action, "container", msg.Actor.ID)
-
-			if debounceTimer != nil {
-				debounceTimer.Stop()
-			}
-			debounceTimer = time.AfterFunc(100*time.Millisecond, func() {
-				w.syncContainers(ctx)
-			})
+		case <-time.After(retryDelay):
 		}
 	}
 }
 
-func (w *Watcher) syncContainers(ctx context.Context) {
+func buildConfig(ctx context.Context, docker *client.Client, hostIP string) ([]byte, error) {
 	filters := client.Filters{}
 	filters.Add("label", "traefik.enable=true")
-	containers, err := w.cli.ContainerList(
-		ctx,
-		client.ContainerListOptions{All: false, Filters: filters},
-	)
+	res, err := docker.ContainerList(ctx, client.ContainerListOptions{Filters: filters})
 	if err != nil {
-		slog.Error("Failed to list containers", "error", err)
-		return
+		return nil, err
 	}
-
-	config, err := BuildTraefikConfig(containers.Items, w.cfg.HostIP)
-	if err != nil {
-		slog.Error("Failed to build Traefik config", "error", err)
-		return
-	}
-
-	// Drain the channel to ensure we only queue the latest config
-	select {
-	case <-w.cfg.Updates:
-	default:
-	}
-
-	select {
-	case w.cfg.Updates <- config:
-		slog.Debug("Config pushed to WebSocket channel")
-	case <-ctx.Done():
-		return
-	default:
-	}
+	return BuildTraefikConfig(res.Items, hostIP)
 }
