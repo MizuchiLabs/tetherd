@@ -10,6 +10,8 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/coder/websocket"
@@ -19,6 +21,8 @@ import (
 )
 
 const pingInterval = 15 * time.Second
+
+var heartbeatFile = filepath.Join(os.TempDir(), "tetherd.alive")
 
 type updateRequest struct {
 	Env    string          `json:"env"`
@@ -83,6 +87,8 @@ func session(
 	}
 	defer func() { _ = conn.CloseNow() }()
 	slog.Info("Connected to tether", "server", cfg.Server, "name", cfg.Name, "env", cfg.Environment)
+	beat()
+	defer func() { _ = os.Remove(heartbeatFile) }()
 
 	// Reading is needed for pings and close frames, tether never sends data.
 	go func() {
@@ -117,10 +123,29 @@ func session(
 			if err != nil {
 				return fmt.Errorf("ping: %w", err)
 			}
+			beat()
 		case data := <-updates:
 			if err := send(data); err != nil {
 				return err
 			}
 		}
+	}
+}
+
+// Healthy reports whether a running agent confirmed its tether connection recently.
+func Healthy() error {
+	info, err := os.Stat(heartbeatFile)
+	if err != nil {
+		return fmt.Errorf("not connected to tether: %w", err)
+	}
+	if age := time.Since(info.ModTime()); age > 3*pingInterval {
+		return fmt.Errorf("not connected to tether, last heartbeat %s ago", age.Round(time.Second))
+	}
+	return nil
+}
+
+func beat() {
+	if err := os.WriteFile(heartbeatFile, []byte("ok\n"), 0o600); err != nil {
+		slog.Debug("Writing heartbeat failed", "path", heartbeatFile, "error", err)
 	}
 }

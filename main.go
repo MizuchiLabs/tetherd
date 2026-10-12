@@ -48,6 +48,13 @@ func main() {
 			go client.Watch(ctx, docker, cfg.HostIP, updates)
 			return client.Connect(ctx, cfg, updates)
 		},
+		Commands: []*cli.Command{{
+			Name:  "health",
+			Usage: "Exit 0 if the running agent is connected to tether, for container healthchecks",
+			Action: func(context.Context, *cli.Command) error {
+				return client.Healthy()
+			},
+		}},
 		Flags: []cli.Flag{
 			&cli.BoolFlag{
 				Name:    "debug",

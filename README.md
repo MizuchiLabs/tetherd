@@ -55,14 +55,29 @@ Tetherd will tell the central server: _"Send traffic for `my-app.com` to `http:/
 
 ## Configuration
 
-| Env Var               | Flag         | Default                 | Description                                     |
-| --------------------- | ------------ | ----------------------- | ----------------------------------------------- |
-| `TETHERD_SERVER`      | `--server`   | `http://127.0.0.1:3000` | URL of the central Tether server.               |
-| `TETHERD_TOKEN`       | `--token`    |                         | **Required**: Token matching the Tether server. |
-| `TETHERD_HOST_IP`     | `--host-ip`  | _(auto)_                | Manual override for this server's IP.           |
-| `TETHERD_ENVIRONMENT` | `--env`      | `default`               | Group servers into isolated environments.       |
-| `TETHERD_NAME`        | `--name`     | _(hostname)_            | Unique agent name shown in Tether.              |
+| Env Var               | Flag         | Default                 | Description                                      |
+| --------------------- | ------------ | ----------------------- | ------------------------------------------------ |
+| `TETHERD_SERVER`      | `--server`   | `http://127.0.0.1:3000` | URL of the central Tether server.                |
+| `TETHERD_TOKEN`       | `--token`    |                         | **Required**: Token matching the Tether server.  |
+| `TETHERD_HOST_IP`     | `--host-ip`  | _(auto)_                | Manual override for this server's IP.            |
+| `TETHERD_ENVIRONMENT` | `--env`      | `default`               | Group servers into isolated environments.        |
+| `TETHERD_NAME`        | `--name`     | _(hostname)_            | Unique agent name shown in Tether.               |
 | `TETHERD_INSECURE`    | `--insecure` | `false`                 | Skip TLS verification when connecting to Tether. |
+| `TETHERD_DEBUG`       | `--debug`    | `false`                 | Enable detailed logging.                         |
+
+## Healthcheck
+
+The image has no shell, so use the built-in `health` command. It exits 0 while the agent is connected to Tether.
+
+```yaml
+healthcheck:
+  test: ["CMD", "tetherd", "health"]
+  interval: 30s
+  timeout: 5s
+  start_period: 10s
+```
+
+The agent keeps a heartbeat file in `/tmp`. With `read_only: true`, add `tmpfs: [/tmp]`.
 
 ## Notes
 
@@ -70,7 +85,6 @@ Tetherd will tell the central server: _"Send traffic for `my-app.com` to `http:/
 - References to other providers like `api@internal` or `auth@file` are passed through untouched.
 - `name@docker` middleware references are rewritten to `name` when the middleware is defined by labels on this host, because Tether serves it through Traefik's HTTP provider. Middlewares that only exist in the gateway's own Docker provider keep the `@docker` suffix.
 - Any middleware defined in Tether's local file or by another agent in the same environment can be used by its plain name, e.g. `traefik.http.routers.my-app.middlewares=auth`.
-| `TETHERD_DEBUG`       | `--debug`    | `false`                 | Enable detailed logging.                        |
 
 ---
 
