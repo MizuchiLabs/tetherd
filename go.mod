@@ -9,7 +9,7 @@ require (
 	github.com/moby/moby/client v0.6.2
 	github.com/stretchr/testify v1.12.1
 	github.com/traefik/paerser v0.2.3
-	github.com/traefik/traefik/v3 v3.7.14
+	github.com/traefik/traefik/v3 v3.7.15
 	github.com/urfave/cli/v3 v3.14.0
 )
 
