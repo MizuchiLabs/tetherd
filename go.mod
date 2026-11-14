@@ -5,7 +5,7 @@ go 1.27.4
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/mizuchilabs/kata v0.2.0
-	github.com/moby/moby/api v1.56.1
+	github.com/moby/moby/api v1.57.0
 	github.com/moby/moby/client v0.6.2
 	github.com/stretchr/testify v1.12.1
 	github.com/traefik/paerser v0.2.3
