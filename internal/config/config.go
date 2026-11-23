@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 
 	"github.com/urfave/cli/v3"
 )
@@ -23,11 +24,15 @@ type Config struct {
 
 // New reads the CLI flags and detects the host IP if it was not set.
 func New(ctx context.Context, cmd *cli.Command) (*Config, error) {
+	token, err := readToken(cmd.String("token"), cmd.String("token-file"))
+	if err != nil {
+		return nil, err
+	}
 	hostname, _ := os.Hostname()
 	cfg := Config{
 		Name:        cmp.Or(cmd.String("name"), hostname, "unknown"),
 		Server:      cmd.String("server"),
-		Token:       cmd.String("token"),
+		Token:       token,
 		Environment: cmd.String("environment"),
 		HostIP:      cmd.String("host-ip"),
 		Insecure:    cmd.Bool("insecure"),
@@ -40,6 +45,24 @@ func New(ctx context.Context, cmd *cli.Command) (*Config, error) {
 		cfg.HostIP = ip
 	}
 	return &cfg, nil
+}
+
+func readToken(token, path string) (string, error) {
+	if path == "" {
+		return token, nil
+	}
+	if token != "" {
+		return "", errors.New("set either --token or --token-file, not both")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading token file: %w", err)
+	}
+	token = strings.TrimSpace(string(data))
+	if token == "" {
+		return "", fmt.Errorf("token file %s is empty", path)
+	}
+	return token, nil
 }
 
 // outboundIP returns the local address used to reach the internet. UDP dial sends no packets.

@@ -82,6 +82,11 @@ func main() {
 				Sources: cli.EnvVars("TETHERD_TOKEN"),
 			},
 			&cli.StringFlag{
+				Name:    "token-file",
+				Usage:   "File holding the token, such as a docker secret",
+				Sources: cli.EnvVars("TETHERD_TOKEN_FILE"),
+			},
+			&cli.StringFlag{
 				Name:    "name",
 				Aliases: []string{"n"},
 				Usage:   "Unique agent name shown in tether. Defaults to the hostname.",

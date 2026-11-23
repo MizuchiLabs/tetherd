@@ -55,15 +55,16 @@ Tetherd will tell the central server: _"Send traffic for `my-app.com` to `http:/
 
 ## Configuration
 
-| Env Var               | Flag         | Default                 | Description                                      |
-| --------------------- | ------------ | ----------------------- | ------------------------------------------------ |
-| `TETHERD_SERVER`      | `--server`   | `http://127.0.0.1:3000` | URL of the central Tether server.                |
-| `TETHERD_TOKEN`       | `--token`    |                         | **Required**: Token matching the Tether server.  |
-| `TETHERD_HOST_IP`     | `--host-ip`  | _(auto)_                | Manual override for this server's IP.            |
-| `TETHERD_ENVIRONMENT` | `--env`      | `default`               | Group servers into isolated environments.        |
-| `TETHERD_NAME`        | `--name`     | _(hostname)_            | Unique agent name shown in Tether.               |
-| `TETHERD_INSECURE`    | `--insecure` | `false`                 | Skip TLS verification when connecting to Tether. |
-| `TETHERD_DEBUG`       | `--debug`    | `false`                 | Enable detailed logging.                         |
+| Env Var               | Flag           | Default                 | Description                                                                      |
+| --------------------- | -------------- | ----------------------- | -------------------------------------------------------------------------------- |
+| `TETHERD_SERVER`      | `--server`     | `http://127.0.0.1:3000` | URL of the central Tether server.                                                |
+| `TETHERD_TOKEN`       | `--token`      |                         | **Required**: Token matching the Tether server.                                  |
+| `TETHERD_TOKEN_FILE`  | `--token-file` |                         | File holding the token, such as a docker secret. Use instead of `TETHERD_TOKEN`. |
+| `TETHERD_HOST_IP`     | `--host-ip`    | _(auto)_                | Manual override for this server's IP.                                            |
+| `TETHERD_ENVIRONMENT` | `--env`        | `default`               | Group servers into isolated environments.                                        |
+| `TETHERD_NAME`        | `--name`       | _(hostname)_            | Unique agent name shown in Tether.                                               |
+| `TETHERD_INSECURE`    | `--insecure`   | `false`                 | Skip TLS verification when connecting to Tether.                                 |
+| `TETHERD_DEBUG`       | `--debug`      | `false`                 | Enable detailed logging.                                                         |
 
 ## Healthcheck
 
