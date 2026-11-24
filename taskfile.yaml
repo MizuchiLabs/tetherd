@@ -7,7 +7,7 @@ tasks:
   dev:
     desc: Run development server
     cmds:
-      - go run . --token 123
+      - go run . --token super-secret-password-32-characters-long
 
   update:
     desc: Update dependencies
